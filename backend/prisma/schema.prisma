@@ -1,0 +1,339 @@
+// prisma/schema.prisma – FINAL VERSION (Ready for Supabase PostgreSQL)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== ENUMS ====================
+enum Role {
+  CUSTOMER
+  ADMIN
+  WAREHOUSE
+}
+
+enum OrderStatus {
+  PROCESSING
+  PICKED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum Priority {
+  NORMAL
+  EXPEDITED
+}
+
+enum ShipmentStatus {
+  PENDING
+  WAITING
+  SHIPPED
+  DELIVERED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  PROCESSED
+  REFUNDED
+}
+
+// ==================== MODELS ====================
+model User {
+  id             Int       @id @default(autoincrement())
+  username       String?   @unique
+  fullName       String
+  email          String    @unique
+  phoneNumber    String?
+  passwordHash   String?   // Keep optional for OAuth users
+  role           Role      @default(CUSTOMER)
+
+  // Flexible user profile (replaces MongoDB)
+  profile        Json?     @default("{}")  // bio, avatarUrl, preferences, theme, etc.
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  addresses      Address[]
+  paymentMethods PaymentMethod[]
+  orders         Order[]
+  reviews        Review[]
+  wishlists      Wishlist[]
+  cartItems      CartItem[]
+  notifications  Notification[]
+  damageReports  DamageReport[] @relation("ReportedBy")
+
+  @@map("users") // Explicit table name mapping
+  @@index([email])
+  @@index([role])
+}
+
+model Address {
+  id             Int      @id @default(autoincrement())
+  user           User     @relation(fields: [userId], references: [id])
+  userId         Int
+  type           String   @default("shipping")
+  streetAddress  String
+  apartment      String?
+  city           String
+  state          String?
+  country        String
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PaymentMethod {
+  id         Int      @id @default(autoincrement())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     Int
+  methodType String
+  lastFour   String?
+  expiryDate DateTime?
+  provider   String?
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  orders     Order[]
+  @@index([userId])
+}
+
+model Author {
+  id    Int    @id @default(autoincrement())
+  name  String 
+  bio   String?
+  books Book[]
+  @@index([name])
+}
+
+model Genre {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  description String?
+  books       Book[]
+  @@index([name])
+}
+
+model Courier {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  shipments Shipment[]
+}
+
+model Book {
+  id                Int       @id @default(autoincrement())
+  title             String
+  author            Author?   @relation(fields: [authorId], references: [id])
+  authorId          Int?
+  genre             Genre?    @relation(fields: [genreId], references: [id])
+  genreId           Int?
+  price             Decimal   @db.Decimal(10,2)
+  stockQuantity     Int       @default(0)
+  sku               String    @unique
+  barcode           String?
+  shelfLocation     String?
+  coverImageUrl     String?
+  galleryImages     Json?
+  description       String?
+  metadata          Json?     @default("{}")
+  averageRating     Decimal   @db.Decimal(3,2) @default(0)
+  totalReviews      Int       @default(0)
+  restockAlertLevel String?
+  status            String    @default("available")
+  version           Int       @default(0)  // Optimistic concurrency
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  orderItems        OrderItem[]
+  reviews           Review[]
+  wishlists         Wishlist[]
+  cartItems         CartItem[]
+  damageReports     DamageReport[]
+
+  @@index([authorId])
+  @@index([genreId])
+  @@index([price])
+  @@index([averageRating])
+  @@index([sku])
+  @@index([createdAt(sort: Desc)])
+}
+
+model Wishlist {
+  user    User @relation(fields: [userId], references: [id])
+  userId  Int
+  book    Book @relation(fields: [bookId], references: [id])
+  bookId  Int
+  addedAt DateTime @default(now())
+  
+  @@id([userId, bookId])
+}
+
+model CartItem {
+  id       Int      @id @default(autoincrement())
+  user     User?    @relation(fields: [userId], references: [id])
+  userId   Int?
+  book     Book     @relation(fields: [bookId], references: [id])
+  bookId   Int
+  quantity Int      @default(1)
+  addedAt  DateTime @default(now())
+  
+  @@index([userId])
+}
+
+model Coupon {
+  id              Int         @id @default(autoincrement())
+  couponCode      String      @unique
+  discountType    DiscountType
+  discountValue   Decimal     @db.Decimal(10,2)
+  expirationDate  DateTime?
+  maxUsageLimit   Int?
+  usageCount      Int         @default(0)
+  status          String      @default("active")
+  createdAt       DateTime    @default(now())
+  
+  orders          Order[]
+}
+
+model Order {
+  id                      Int       @id @default(autoincrement())
+  orderNumber             String    @unique
+  user                    User?     @relation(fields: [userId], references: [id])
+  userId                  Int?
+  orderDate               DateTime  @default(now())
+  priority                Priority  @default(NORMAL)
+  status                  OrderStatus @default(PROCESSING)
+  paymentMethod           PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  paymentMethodId         Int?
+  subtotal                Decimal   @db.Decimal(12,2)
+  shippingCost            Decimal   @db.Decimal(12,2) @default(0)
+  tax                     Decimal   @db.Decimal(12,2) @default(0)
+  totalAmount             Decimal   @db.Decimal(12,2)
+
+  // Critical historical snapshots
+  shippingAddressSnapshot Json
+  billingAddressSnapshot  Json?
+
+  coupon                  Coupon?   @relation(fields: [couponId], references: [id])
+  couponId                Int?
+
+  orderedAt               DateTime?
+  pickedAt                DateTime?
+  packedAt                DateTime?
+  shippedAt               DateTime?
+  deliveredAt             DateTime?
+
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  orderItems              OrderItem[]
+  shipment                Shipment?
+  notifications           Notification[]
+  returns                 Return[]
+
+  @@index([userId])
+  @@index([orderDate(sort: Desc)])
+  @@index([status])
+}
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  order     Order   @relation(fields: [orderId], references: [id])
+  orderId   Int
+  book      Book    @relation(fields: [bookId], references: [id])
+  bookId    Int
+  quantity  Int
+  unitPrice Decimal @db.Decimal(12,2)
+  subtotal  Decimal @db.Decimal(12,2)
+  
+  @@index([orderId])
+  @@index([bookId])
+}
+
+model Shipment {
+  id                 Int            @id @default(autoincrement())
+  order              Order          @relation(fields: [orderId], references: [id])
+  orderId            Int            @unique
+  trackingNumber     String?        @unique
+  courier            Courier?       @relation(fields: [courierId], references: [id])
+  courierId          Int?
+  shippingMethod     String?
+  assignedPickupTime DateTime?
+  packageType        String?
+  protectiveMaterial String?
+  weightKg           Decimal?       @db.Decimal(8,2)
+  dimensionsCm       String?
+  status             ShipmentStatus @default(PENDING)
+  shippedAt          DateTime?
+  deliveredAt        DateTime?
+  createdAt          DateTime       @default(now())
+}
+
+model Review {
+  id         Int      @id @default(autoincrement())
+  book       Book     @relation(fields: [bookId], references: [id])
+  bookId     Int
+  user       User     @relation(fields: [userId], references: [id])
+  userId     Int
+  rating     Int
+  reviewText String?
+  createdAt  DateTime @default(now())
+
+  @@index([bookId])
+  @@index([userId])
+}
+
+model Notification {
+  id             Int      @id @default(autoincrement())
+  user           User     @relation(fields: [userId], references: [id])
+  userId         Int
+  type           String
+  title          String?
+  message        String
+  relatedOrder   Order?   @relation(fields: [relatedOrderId], references: [id])
+  relatedOrderId Int?
+  isRead         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  readAt         DateTime?
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt(sort: Desc)])
+}
+
+model DamageReport {
+  id          Int      @id @default(autoincrement())
+  book        Book?    @relation(fields: [bookId], references: [id])
+  bookId      Int?
+  sku         String?
+  description String
+  reportedBy  User?    @relation("ReportedBy", fields: [reportedById], references: [id])
+  reportedById Int?
+  reportedAt  DateTime @default(now())
+  
+  @@index([bookId])
+  @@index([reportedById])
+}
+
+model Return {
+  id          Int          @id @default(autoincrement())
+  order       Order        @relation(fields: [orderId], references: [id])
+  orderId     Int
+  reason      String?
+  status      ReturnStatus @default(PENDING)
+  requestedAt DateTime     @default(now())
+  processedAt DateTime?
+
+  @@index([orderId])
+}
