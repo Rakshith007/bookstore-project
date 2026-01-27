@@ -19,6 +19,10 @@ export class CreateAddressDto {
   country: string;
 
   @IsOptional()
+  @IsString()
+  phone?: string; // Alternative phone for this address
+
+  @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
 }

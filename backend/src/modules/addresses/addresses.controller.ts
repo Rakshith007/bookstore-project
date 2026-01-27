@@ -48,6 +48,12 @@ export class AddressesController {
     return this.addressesService.update(req.user.userId, Number(id), dto);
   }
 
+  // New endpoint: Set an address as the default one
+  @Patch(':id/default')
+  setDefault(@Req() req: AuthRequest, @Param('id') id: string) {
+    return this.addressesService.setDefault(req.user.userId, Number(id));
+  }
+
   @Delete(':id')
   remove(@Req() req: AuthRequest, @Param('id') id: string) {
     return this.addressesService.remove(req.user.userId, Number(id));

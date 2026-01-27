@@ -1,4 +1,7 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   LineChart, 
   Line, 
@@ -8,437 +11,477 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer 
+  ResponsiveContainer
 } from 'recharts';
-import { Menu } from 'lucide-react';
+import { 
+  Menu, 
+  TrendingUp, 
+  Package, 
+  Users, 
+  BookOpen, 
+  HeartHandshake,
+  DollarSign,
+  ShoppingCart,
+  AlertCircle,
+  BookPlus,
+  Import,
+  Truck,
+  ListChecks,
+  Printer,
+  ArrowRight,
+  LogOut
+} from 'lucide-react';
 import { Sidebar, MobileSidebarDrawer } from '../../components/layout/AdminSidebar';
+import { getUserRole, logout } from '../../lib/auth'; // ← Your auth helpers
 
+// Reusable StatCard (unchanged)
 interface StatCardProps {
   title: string;
   value: string | number;
+  icon?: React.ReactNode;
+  trend?: string;
+  bgGradient?: string;
+  iconBg?: string;
+  highlight?: boolean;
 }
 
-interface ChartData {
-  name: string;
-  value: number;
-}
-
-interface Order {
-  id: string;
-  customer: string;
-  date: string;
-  status: 'Shipped' | 'Processing' | 'Delivered';
-  total: string;
-}
-
-const StatCard: React.FC<StatCardProps> = ({ title, value }) => {
+const StatCard: React.FC<StatCardProps> = ({ 
+  title, 
+  value, 
+  icon, 
+  trend,
+  bgGradient = "from-indigo-500 to-purple-600",
+  iconBg = "bg-indigo-100",
+  highlight = false
+}) => {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm hover:shadow-md transition-shadow">
-      <div className="text-gray-600 text-sm mb-2 font-medium">{title}</div>
-      <div className="text-3xl font-semibold text-gray-900">{value}</div>
+    <div className={`group relative bg-white border border-gray-100 rounded-2xl p-6 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden ${
+      highlight ? 'ring-4 ring-indigo-200 ring-opacity-60 shadow-xl' : ''
+    }`}>
+      <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${bgGradient} opacity-5 rounded-full blur-2xl group-hover:opacity-10 transition-opacity duration-300 -mr-16 -mt-16`}></div>
+      
+      <div className="relative">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <p className="text-gray-500 text-sm font-medium mb-1">{title}</p>
+            <h3 className={`font-bold text-gray-900 tracking-tight ${highlight ? 'text-5xl' : 'text-3xl'}`}>
+              {value}
+            </h3>
+            {trend && (
+              <p className="text-sm text-gray-500 mt-2">{trend}</p>
+            )}
+          </div>
+          {icon && (
+            <div className={`${iconBg} p-4 rounded-2xl group-hover:scale-110 transition-transform duration-300 shadow-lg`}>
+              <div className={highlight ? 'text-indigo-700' : 'text-indigo-600'}>{icon}</div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
 
-const salesData: ChartData[] = [
-  { name: 'Jan', value: 35000 },
-  { name: 'Feb', value: 42000 },
-  { name: 'Mar', value: 38000 },
-  { name: 'Apr', value: 41000 },
-  { name: 'May', value: 35000 },
-  { name: 'Jun', value: 48000 },
-  { name: 'Jul', value: 40000 },
-];
+// NavigationCard (unchanged)
+interface NavigationCardProps {
+  title: string;
+  description: string;
+  value?: string | number;
+  icon: React.ReactNode;
+  bgGradient: string;
+  iconBg: string;
+  onClick: () => void;
+}
 
-const genreData: ChartData[] = [
-  { name: 'Fiction', value: 1800 },
-  { name: 'Mystery', value: 1500 },
-  { name: 'Sci-Fi', value: 1200 },
-  { name: 'Romance', value: 1400 },
-  { name: 'Thriller', value: 1100 },
-  { name: 'Biography', value: 1500 },
-];
-
-const orders: Order[] = [
-  { id: '#12345', customer: 'Emily Carter', date: '2024-07-26', status: 'Shipped', total: '$55.00' },
-  { id: '#12346', customer: 'David Lee', date: '2024-07-25', status: 'Processing', total: '$75.00' },
-  { id: '#12347', customer: 'Olivia Brown', date: '2024-07-24', status: 'Delivered', total: '$120.00' },
-  { id: '#12348', customer: 'Ethan Clark', date: '2024-07-23', status: 'Shipped', total: '$90.00' },
-  { id: '#12349', customer: 'Sophia Green', date: '2024-07-22', status: 'Processing', total: '$60.00' },
-];
+const NavigationCard: React.FC<NavigationCardProps> = ({ 
+  title, 
+  description,
+  value,
+  icon, 
+  bgGradient,
+  iconBg,
+  onClick
+}) => {
+  return (
+    <button
+      onClick={onClick}
+      className="group relative bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden text-left w-full"
+    >
+      <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${bgGradient} opacity-5 rounded-full blur-2xl group-hover:opacity-10 transition-opacity duration-300 -mr-16 -mt-16`}></div>
+      
+      <div className="relative">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex-1">
+            <h3 className="font-bold text-gray-900 text-2xl mb-2">
+              {title}
+            </h3>
+            <p className="text-gray-500 text-sm mb-3">{description}</p>
+            {value !== undefined && (
+              <p className="text-3xl font-bold text-indigo-600">{value}</p>
+            )}
+          </div>
+          <div className={`${iconBg} p-4 rounded-2xl group-hover:scale-110 transition-transform duration-300 shadow-lg`}>
+            {icon}
+          </div>
+        </div>
+        <div className="flex items-center text-indigo-600 font-medium text-sm mt-4 group-hover:translate-x-2 transition-transform duration-300">
+          <span>Open</span>
+          <ArrowRight size={16} className="ml-2" />
+        </div>
+      </div>
+    </button>
+  );
+};
 
 const DashboardPage: React.FC = () => {
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [needsAdminSetup, setNeedsAdminSetup] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [checkingAdmin, setCheckingAdmin] = useState(true);
+  const [isChecking, setIsChecking] = useState(true); // Prevent UI flash
 
-  const API_URL = 'http://localhost:4000'; // Change if your backend runs on different port
+  // All your dashboard states (unchanged)
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [totalSales, setTotalSales] = useState(0);
+  const [pendingShipments, setPendingShipments] = useState(0);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [totalStock, setTotalStock] = useState(0);
+  const [totalBooksDonated, setTotalBooksDonated] = useState(0);
+  const [totalCharitiesReached, setTotalCharitiesReached] = useState(0);
+  const [pendingCharityShipments, setPendingCharityShipments] = useState(0);
+  const [salesData, setSalesData] = useState<any[]>([]);
+  const [genreData, setGenreData] = useState<any[]>([]);
 
-  // Check if admin exists and user is logged in
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
   useEffect(() => {
-    const checkInitialState = async () => {
-      setCheckingAdmin(true);
+    // Step 1: Immediate role check – do NOT render UI if not admin
+    const role = getUserRole()?.toLowerCase();
+
+    if (!role || role !== 'admin') {
+      logout(); // Clear token for safety
+      navigate('/'); // Redirect normal users to home (or '/login')
+      return;
+    }
+
+    // Step 2: Only real admins reach here – proceed to load data
+    setIsChecking(false);
+    fetchDashboardData();
+  }, [navigate]);
+
+  const fetchDashboardData = async () => {
+    setDashboardLoading(true);
+    setDashboardError('');
+
+    try {
       const token = localStorage.getItem('authToken');
-      
-      if (token) {
-        setIsLoggedIn(true);
-        setCheckingAdmin(false);
+      if (!token) {
+        logout();
+        navigate('/admin/login');
         return;
       }
 
+      const ordersResponse = await fetch(`${API_URL}/admin/orders?limit=1000`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!ordersResponse.ok) {
+        if (ordersResponse.status === 401 || ordersResponse.status === 403) {
+          logout();
+          navigate('/admin/login');
+          return;
+        }
+        throw new Error('Failed to fetch orders');
+      }
+
+      const ordersResult = await ordersResponse.json();
+      const orders = ordersResult.data || [];
+
+      const ordersCount = orders.length;
+      const salesTotal = orders.reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+      const pendingCustomer = orders.filter((o: any) => 
+        ['PROCESSING', 'PICKED', 'PACKED'].includes(o.status)
+      ).length;
+
+      let booksDonated = 0;
+      const charitiesReached = new Set<string>();
+      let pendingCharity = 0;
+
+      orders.forEach((order: any) => {
+        order.fulfillments?.forEach((f: any) => {
+          if (f.charityAddress) {
+            booksDonated += f.booksFulfilled || 0;
+            const addrStr = typeof f.charityAddress === 'string' 
+              ? f.charityAddress 
+              : JSON.stringify(f.charityAddress);
+            charitiesReached.add(addrStr.toLowerCase().trim());
+            if (!f.deliveredAt || f.status !== 'DELIVERED') {
+              pendingCharity += 1;
+            }
+          }
+        });
+      });
+
+      const monthlyMap = new Map<string, number>();
+      orders.forEach((o: any) => {
+        if (!o.orderDate) return;
+        const date = new Date(o.orderDate);
+        const monthKey = date.toLocaleString('default', { month: 'short', year: 'numeric' });
+        monthlyMap.set(monthKey, (monthlyMap.get(monthKey) || 0) + (o.totalAmount || 0));
+      });
+
+      const monthlySales = Array.from(monthlyMap.entries())
+        .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+        .slice(-12)
+        .map(([name, value]) => ({ name, value: Math.round(value) }));
+
+      const genreMap = new Map<string, number>();
+      orders.forEach((o: any) => {
+        o.orderItems?.forEach((item: any) => {
+          const genreName = item.book?.genre?.name || 'Unknown';
+          const revenue = (item.quantity || 0) * (item.unitPrice || 0);
+          genreMap.set(genreName, (genreMap.get(genreName) || 0) + revenue);
+        });
+      });
+
+      const topGenres = Array.from(genreMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([name, value]) => ({ name, value: Math.round(value) }));
+
+      let usersCount = 0;
       try {
-        // Check if any admin exists
-        const response = await fetch(`${API_URL}/auth/admin/check-exists`, {
-          method: 'GET',
+        const usersResponse = await fetch(`${API_URL}/users`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (usersResponse.ok) {
+          const usersData = await usersResponse.json();
+          usersCount = Array.isArray(usersData) ? usersData.length : 0;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch users count');
+      }
+
+      let stockSum = 0;
+      try {
+        const booksResponse = await fetch(`${API_URL}/books?limit=1000`, {
           headers: {
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          if (!data.exists) {
-            setNeedsAdminSetup(true);
-          }
-        } else {
-          console.error('Failed to check admin status');
+        if (booksResponse.ok) {
+          const data = await booksResponse.json();
+          const books: any[] = Array.isArray(data) 
+            ? data 
+            : data.data || data.books || [];
+
+          stockSum = books.reduce((sum: number, book: any) => 
+            sum + (book.stockQuantity || 0), 0
+          );
         }
       } catch (err) {
-        console.error('Error checking admin:', err);
-        // If backend is not reachable, show login form anyway
-      } finally {
-        setCheckingAdmin(false);
-      }
-    };
-
-    checkInitialState();
-  }, []);
-
-  const handleAdminSetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const response = await fetch(`${API_URL}/auth/admin/setup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          fullName, 
-          email, 
-          password 
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create admin account');
+        console.error('Error fetching total stock:', err);
       }
 
-      // Save token and mark as logged in
-      localStorage.setItem('authToken', data.access_token);
-      setIsLoggedIn(true);
-      setNeedsAdminSetup(false);
+      setTotalOrders(ordersCount);
+      setTotalSales(salesTotal);
+      setPendingShipments(pendingCustomer);
+      setTotalUsers(usersCount);
+      setTotalStock(stockSum);
+      setTotalBooksDonated(booksDonated);
+      setTotalCharitiesReached(charitiesReached.size);
+      setPendingCharityShipments(pendingCharity);
+      setSalesData(monthlySales.length > 0 ? monthlySales : [{ name: 'No data', value: 0 }]);
+      setGenreData(topGenres.length > 0 ? topGenres : [{ name: 'No data', value: 0 }]);
+
     } catch (err: any) {
-      setError(err.message || 'Failed to create admin account');
+      setDashboardError(err.message || 'Failed to load dashboard data');
+      console.error(err);
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Invalid credentials');
-      }
-
-      // Save token and mark as logged in
-      localStorage.setItem('authToken', data.access_token || data.token);
-      setIsLoggedIn(true);
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Check email/password.');
-    } finally {
-      setLoading(false);
+      setDashboardLoading(false);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('authToken');
-    setIsLoggedIn(false);
-    setEmail('');
-    setPassword('');
-    setFullName('');
+    logout();
+    navigate('/admin/login');
   };
 
-  // Show loading while checking admin status
-  if (checkingAdmin) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-10 max-w-md w-full border border-gray-100 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Checking system configuration...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show admin setup form if no admin exists
-  if (needsAdminSetup && !isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-10 max-w-md w-full border border-gray-100">
-          <div className="text-center mb-10">
-            <h1 className="text-4xl font-bold text-gray-900 mb-3">Create Admin Account</h1>
-            <p className="text-gray-600">No admin account found. Please create the first admin user.</p>
-          </div>
-
-          <form onSubmit={handleAdminSetup} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                placeholder="Enter your full name"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                placeholder="Enter your email"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                placeholder="Create a password"
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3.5 rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed transition shadow-lg"
-            >
-              {loading ? 'Creating Admin...' : 'Create Admin Account'}
-            </button>
-          </form>
-
-          <div className="mt-8 text-center text-sm text-gray-500">
-            <p>This will be the main administrator account for the bookstore system</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Show login form if not logged in (and admin exists)
-  if (!isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-10 max-w-md w-full border border-gray-100">
-          <div className="text-center mb-10">
-            <h1 className="text-4xl font-bold text-gray-900 mb-3">Admin Login</h1>
-            <p className="text-gray-600">Sign in to access the bookstore dashboard</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                placeholder="Enter your email"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                placeholder="Enter your password"
-              />
-            </div>
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3.5 rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed transition shadow-lg"
-            >
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-          </form>
-
-          <div className="mt-8 text-center text-sm text-gray-500">
-            <p>Use the email and password from your admin account</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Full Dashboard when logged in
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Shipped':
-        return 'bg-blue-100 text-blue-700';
-      case 'Processing':
-        return 'bg-yellow-100 text-yellow-700';
-      case 'Delivered':
-        return 'bg-green-100 text-green-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
-    }
+  const handleNavigation = (path: string) => {
+    navigate(path);
   };
+
+  // Show loading/checking state (prevents UI flash for non-admins)
+  if (isChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Desktop Sidebar with Logout Prop */}
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <div className="hidden lg:block">
         <Sidebar onLogout={handleLogout} />
       </div>
-
-      {/* Mobile Sidebar with Logout Prop */}
       <MobileSidebarDrawer 
         isOpen={isSidebarOpen} 
         onClose={() => setIsSidebarOpen(false)} 
-        onLogout={handleLogout}
+        onLogout={handleLogout} 
       />
-
-      {/* Mobile Header - Logout removed from here */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-30 px-4 py-3 flex items-center justify-between shadow-sm">
-        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-lg">
+      
+      <div className="lg:hidden fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-md border-b border-gray-200 z-30 px-4 py-4 flex items-center justify-between shadow-sm">
+        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
           <Menu size={24} className="text-gray-700" />
         </button>
-        <span className="text-lg font-semibold text-gray-900">Bookstore Admin</span>
-        <div className="w-8"></div> {/* Spacer for alignment */}
+        <span className="text-lg font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+          Bookstore Admin
+        </span>
+        <div className="w-10"></div>
       </div>
 
-      {/* Main Dashboard Content */}
-      <div className="lg:ml-64 pt-16 lg:pt-0 transition-all duration-300">
-        <div className="px-4 py-6 sm:px-8 sm:py-8 max-w-[1600px] mx-auto">
-          {/* Header - Logout button removed */}
-          <div className="mb-8 flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl sm:text-4xl font-semibold text-gray-900 mb-2">Dashboard</h1>
-              <p className="text-gray-500 text-sm">Welcome back, Admin</p>
+      <div className="lg:ml-64 pt-20 lg:pt-0">
+        <div className="px-4 py-8 sm:px-8 max-w-[1800px] mx-auto">
+          <div className="mb-10">
+            <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 mb-3 tracking-tight">
+              Dashboard Overview
+            </h1>
+            <p className="text-gray-600 text-lg">Monitor your bookstore performance at a glance</p>
+          </div>
+
+          {dashboardLoading && (
+            <div className="text-center py-32">
+              <div className="relative inline-block">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-indigo-600"></div>
+                <div className="absolute inset-0 rounded-full blur-xl bg-indigo-400/30 animate-pulse"></div>
+              </div>
+              <p className="mt-8 text-gray-600 text-lg font-medium">Loading your dashboard...</p>
             </div>
-          </div>
+          )}
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
-            <StatCard title="Total Orders" value="1,250" />
-            <StatCard title="Sales" value="$45,000" />
-            <StatCard title="Stock Levels" value="8,500" />
-            <StatCard title="New Users" value="320" />
-            <StatCard title="Pending Shipments" value="75" />
-          </div>
+          {dashboardError && (
+            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-6 py-5 rounded-xl mb-8 flex items-start gap-4 shadow-sm">
+              <AlertCircle size={24} className="flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-lg mb-1">Error Loading Dashboard</h3>
+                <p className="text-sm">{dashboardError}</p>
+              </div>
+            </div>
+          )}
 
-          {/* Overview Section */}
-          <div className="mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-6">Overview</h2>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              {/* Sales Trends */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-                <div className="mb-6">
-                  <div className="text-sm text-gray-600 mb-2">Sales Trends</div>
-                  <div className="text-3xl font-semibold text-gray-900 mb-1">$45,000</div>
-                  <div className="text-sm text-gray-500">
-                    Last 30 Days <span className="text-green-600 font-medium">+15%</span>
-                  </div>
-                </div>
-                <div className="h-[250px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={salesData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} dy={10} />
-                      <YAxis hide />
-                      <Tooltip contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                      <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={3} dot={{ fill: '#6366f1', r: 4 }} activeDot={{ r: 6 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
+          {!dashboardLoading && !dashboardError && (
+            <>
+              {/* Business Metrics */}
+              <div className="mb-8">
+                <h2 className="text-xl font-bold text-gray-800 mb-5 flex items-center gap-2">
+                  <ShoppingCart size={24} className="text-indigo-600" />
+                  Business Metrics
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  <StatCard title="Total Orders" value={totalOrders.toLocaleString()} icon={<TrendingUp size={24} />} bgGradient="from-blue-500 to-cyan-600" iconBg="bg-blue-100" />
+                  <StatCard title="Total Revenue" value={`OMR `} icon={<DollarSign size={24} />} bgGradient="from-emerald-500 to-teal-600" iconBg="bg-emerald-100" />
+                  <StatCard title="Total Customers" value={totalUsers.toLocaleString()} icon={<Users size={24} />} bgGradient="from-purple-500 to-pink-600" iconBg="bg-purple-100" />
+                  <StatCard title="Books in Stock" value={totalStock.toLocaleString()} icon={<BookOpen size={32} />} trend="Current available inventory" bgGradient="from-indigo-600 to-blue-700" iconBg="bg-indigo-100" highlight={true} />
                 </div>
               </div>
 
-              {/* Genre Performance */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-                <div className="mb-6">
-                  <div className="text-sm text-gray-600 mb-2">Genre Performance</div>
-                  <div className="text-3xl font-semibold text-gray-900 mb-1">8,500</div>
-                  <div className="text-sm text-gray-500">
-                    This Month <span className="text-green-600 font-medium">+8%</span>
-                  </div>
-                </div>
-                <div className="h-[250px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={genreData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} dy={10} />
-                      <YAxis hide />
-                      <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                      <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={40} />
-                    </BarChart>
-                  </ResponsiveContainer>
+              {/* Management Navigation Cards */}
+              <div className="mb-12">
+                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+                  <Package size={24} className="text-indigo-600" />
+                  Management
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <NavigationCard
+                    title="Users"
+                    description="Manage customer accounts and permissions"
+                    icon={<Users size={28} className="text-purple-600" />}
+                    bgGradient="from-purple-500 to-pink-600"
+                    iconBg="bg-purple-100"
+                    onClick={() => handleNavigation('/admin/users')}
+                  />
+
+                  <NavigationCard
+                    title="Books"
+                    description="View and manage book inventory"
+                    icon={<BookOpen size={28} className="text-indigo-600" />}
+                    bgGradient="from-indigo-500 to-purple-600"
+                    iconBg="bg-indigo-100"
+                    onClick={() => handleNavigation('/admin/books')}
+                  />
+
+                  <NavigationCard
+                    title="Add Books"
+                    description="Add new books to your catalog"
+                    icon={<BookPlus size={28} className="text-teal-600" />}
+                    bgGradient="from-teal-500 to-cyan-600"
+                    iconBg="bg-teal-100"
+                    onClick={() => handleNavigation('/admin/addbookpage')}
+                  />
+
+                  <NavigationCard
+                    title="Orders"
+                    description="Track and manage customer orders"
+                    icon={<ShoppingCart size={28} className="text-blue-600" />}
+                    bgGradient="from-blue-500 to-cyan-600"
+                    iconBg="bg-blue-100"
+                    onClick={() => handleNavigation('/admin/orders')}
+                  />
+
+                  <NavigationCard
+                    title="Incoming Orders"
+                    description="Process new incoming orders"
+                    icon={<Import size={28} className="text-yellow-600" />}
+                    bgGradient="from-yellow-500 to-orange-600"
+                    iconBg="bg-yellow-100"
+                    onClick={() => handleNavigation('/warehouse/incomingorders')}
+                  />
+
+                  <NavigationCard
+                    title="Delivery Queue"
+                    description="Manage shipping queue and deliveries"
+                    icon={<Truck size={28} className="text-green-600" />}
+                    bgGradient="from-green-500 to-emerald-600"
+                    iconBg="bg-green-100"
+                    onClick={() => handleNavigation('/admin/shippingqueue')}
+                  />
+
+                  <NavigationCard
+                    title="Inventory Check"
+                    description="Verify and audit stock levels"
+                    icon={<ListChecks size={28} className="text-slate-600" />}
+                    bgGradient="from-slate-500 to-gray-600"
+                    iconBg="bg-slate-100"
+                    onClick={() => handleNavigation('/warehouse/inventorycheck')}
+                  />
                 </div>
               </div>
-            </div>
-          </div>
+
+              {/* Charity Impact */}
+              <div className="mb-10">
+                <h2 className="text-xl font-bold text-gray-800 mb-5 flex items-center gap-2">
+                  <HeartHandshake size={24} className="text-rose-600" />
+                  Charity Impact
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <StatCard 
+                    title="Books Donated" 
+                    value={totalBooksDonated.toLocaleString()} 
+                    icon={<HeartHandshake size={24} />} 
+                    trend="Making a difference"
+                    bgGradient="from-rose-500 to-pink-600"
+                    iconBg="bg-rose-100"
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

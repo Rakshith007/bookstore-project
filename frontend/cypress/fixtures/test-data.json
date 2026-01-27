@@ -1,0 +1,13 @@
+{
+  "user": {                    
+    "email": "rakshi@gmail.com",
+    "password": "test@123",
+    "name": "Test User"
+  },
+  "book": {                    
+    "title": "React Guide",
+    "author": "John Doe",
+    "searchTerm": "react"      
+  }
+}
+

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Search, Menu, Loader2 } from "lucide-react";
+import { Search, Menu, Loader2, Download, AlertCircle } from "lucide-react";
 import { Sidebar, MobileSidebarDrawer } from "../../components/layout/AdminSidebar";
 import { getToken } from "../../lib/auth";
 import * as XLSX from "xlsx";
@@ -42,7 +42,6 @@ const InventoryCheck: React.FC = () => {
   const [addedStock, setAddedStock] = useState<number | "">("");
   const [updating, setUpdating] = useState(false);
 
-  // Persistent global threshold
   const [globalThreshold, setGlobalThreshold] = useState<number | "">(() => {
     const saved = localStorage.getItem('inventoryGlobalThreshold');
     return saved ? Number(saved) : "";
@@ -56,12 +55,9 @@ const InventoryCheck: React.FC = () => {
     }
   }, [globalThreshold]);
 
-  // Circular placeholder
   const PLACEHOLDER_IMAGE = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iI2NjY2NjYyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LXNpemU9IjEyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSIgZmlsbD0iIzk5OSI+Tm8gQ292ZXI8L3RleHQ+PC9zdmc+';
 
-  /* =========================================================
-     FETCH INVENTORY DATA
-  ========================================================= */
+  // Fetch data
   const fetchInventory = async () => {
     try {
       setLoading(true);
@@ -87,13 +83,10 @@ const InventoryCheck: React.FC = () => {
 
       const processed: InventoryItem[] = books.map((book) => {
         const stock = book.stockQuantity;
-
         let stockLevel: "Critical" | "Low" | "In Stock" = "In Stock";
 
         if (threshold !== null) {
-          if (stock <= threshold) {
-            stockLevel = "Critical";
-          }
+          if (stock <= threshold) stockLevel = "Critical";
         } else {
           if (stock <= 5) stockLevel = "Critical";
           else if (stock <= 10) stockLevel = "Low";
@@ -101,18 +94,13 @@ const InventoryCheck: React.FC = () => {
 
         const restockAlert = threshold !== null && stock <= threshold;
 
-        return {
-          ...book,
-          stockLevel,
-          restockAlert,
-        };
+        return { ...book, stockLevel, restockAlert };
       });
 
       setInventoryData(processed);
       setError(null);
     } catch (err: any) {
       setError(err.message || "Failed to load inventory");
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -122,47 +110,35 @@ const InventoryCheck: React.FC = () => {
     fetchInventory();
   }, [globalThreshold]);
 
-  /* =========================================================
-     HELPERS
-  ========================================================= */
-  const getStockLevelColor = (level: string) => {
-    switch (level) {
-      case "Critical":
-        return "bg-red-50 text-red-700";
-      case "Low":
-        return "bg-orange-50 text-orange-700";
-      case "In Stock":
-        return "bg-green-50 text-green-700";
-      default:
-        return "bg-gray-50 text-gray-700";
-    }
-  };
-
   const filteredInventory = inventoryData.filter(
     (item) =>
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.sku.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  /* =========================================================
-     BULK UPDATE STOCK & PRICE
-  ========================================================= */
+  const getStockLevelColor = (level: string) => {
+    switch (level) {
+      case "Critical": return "bg-red-100 text-red-800 border-red-300";
+      case "Low":      return "bg-orange-100 text-orange-800 border-orange-300";
+      case "In Stock": return "bg-green-100 text-green-800 border-green-300";
+      default:         return "bg-gray-100 text-gray-800 border-gray-300";
+    }
+  };
+
+  // ────────────────────────────────────────────────
+  //  BULK UPDATE
+  // ────────────────────────────────────────────────
   const handleUpdateStock = async () => {
     if (selectedRows.length === 0) return;
-
     setUpdating(true);
+
     try {
       const token = getToken();
       if (!token) throw new Error("Authentication required");
 
       const payload: { price?: number; addedStock?: number } = {};
-
-      if (updatedPrice !== "") {
-        payload.price = updatedPrice;
-      }
-      if (addedStock !== "") {
-        payload.addedStock = addedStock;
-      }
+      if (updatedPrice !== "") payload.price = updatedPrice;
+      if (addedStock !== "") payload.addedStock = addedStock;
 
       if (Object.keys(payload).length === 0) {
         setError("Please enter price or stock to update");
@@ -171,7 +147,7 @@ const InventoryCheck: React.FC = () => {
 
       await Promise.all(
         selectedRows.map(async (bookId) => {
-          const response = await fetch(`${API_BASE_URL}/books/${bookId}/inventory`, {
+          const res = await fetch(`${API_BASE_URL}/books/${bookId}/inventory`, {
             method: "PATCH",
             headers: {
               Authorization: `Bearer ${token}`,
@@ -179,58 +155,38 @@ const InventoryCheck: React.FC = () => {
             },
             body: JSON.stringify(payload),
           });
-
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.message || `Failed to update book ${bookId}`);
-          }
+          if (!res.ok) throw new Error(`Failed to update book ${bookId}`);
         })
       );
 
       await fetchInventory();
-
       setSelectedRows([]);
       setUpdatedPrice("");
       setAddedStock("");
       setShowUpdateModal(false);
       setError(null);
     } catch (err: any) {
-      setError(err.message || "Failed to update inventory");
+      setError(err.message || "Update failed");
     } finally {
       setUpdating(false);
     }
   };
 
-  /* =========================================================
-     EXPORT INVENTORY - PROFESSIONAL & ALIGNED
-  ========================================================= */
+  // ────────────────────────────────────────────────
+  //  EXPORT (same logic, just cleaner)
+  // ────────────────────────────────────────────────
   const exportInventory = (period: "today" | "weekly" | "monthly") => {
     const now = new Date();
-    let label = "Today";
+    let label = period === "today" ? "Today" :
+                period === "weekly" ? "Last 7 Days" : "Last 30 Days";
 
-    if (period === "weekly") {
-      label = "Last 7 Days";
-    }
-    if (period === "monthly") {
-      label = "Last 30 Days";
-    }
-
-    const thresholdText = globalThreshold !== "" 
-      ? `≤ ${globalThreshold} (Critical)` 
+    const thresholdText = globalThreshold !== ""
+      ? `≤ ${globalThreshold} (Critical)`
       : "Default (≤5 Critical, ≤10 Low)";
 
-    // Define exact headers
-    const headers = [
-      "Book Title",
-      "SKU",
-      "Price (₹)",
-      "Current Stock",
-      "Stock Level",
-      "Restock Alert",
-    ];
+    const headers = ["Book Title", "SKU", "Price (OMR)", "Current Stock", "Stock Level", "Restock Alert"];
 
-    // Map data exactly to headers
-    const dataRows = filteredInventory.map((item) => [
+    const dataRows = filteredInventory.map(item => [
       item.title,
       item.sku,
       item.price,
@@ -239,286 +195,314 @@ const InventoryCheck: React.FC = () => {
       item.restockAlert ? "Yes" : "No",
     ]);
 
-    // Create worksheet
     const ws = XLSX.utils.aoa_to_sheet([
       ["INVENTORY REPORT"],
       [`Period: ${label}`],
       [`Generated: ${now.toLocaleString()}`],
       [`Global Threshold: ${thresholdText}`],
       [`Total Books: ${filteredInventory.length}`],
-      [], // Empty row
-      headers, // Header row
-      ...dataRows,
+      [],
+      headers,
+      ...dataRows
     ]);
 
-    // Auto-size columns
-    const colWidths = [
-      { wch: 40 }, // Book Title
-      { wch: 20 }, // SKU
-      { wch: 15 }, // Price
-      { wch: 15 }, // Stock
-      { wch: 15 }, // Stock Level
-      { wch: 15 }, // Restock Alert
+    ws['!cols'] = [
+      { wch: 40 }, { wch: 18 }, { wch: 12 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 }
     ];
-    ws['!cols'] = colWidths;
-
-    // Style header row (row 7 = index 6)
-    const headerRange = { s: { c: 0, r: 6 }, e: { c: headers.length - 1, r: 6 } };
-    for (let C = headerRange.s.c; C <= headerRange.e.c; ++C) {
-      const cellAddress = XLSX.utils.encode_cell({ c: C, r: 6 });
-      if (!ws[cellAddress]) ws[cellAddress] = {};
-      ws[cellAddress].s = {
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        fill: { fgColor: { rgb: "1E40AF" } },
-        alignment: { horizontal: "center", vertical: "center" },
-      };
-    }
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
+    XLSX.utils.book_append_sheet(wb, ws, "Inventory");
 
-    const fileName = `Inventory_Report_${label.replace(/ /g, "_")}_${now.toISOString().slice(0, 10)}.xlsx`;
+    const fileName = `Inventory_${label.replace(/ /g, "_")}_${now.toISOString().slice(0,10)}.xlsx`;
     XLSX.writeFile(wb, fileName);
 
     setShowExportModal(false);
   };
 
-  /* =========================================================
-     RENDER
-  ========================================================= */
   return (
-    <div className="min-h-screen bg-gray-50 font-serif">
-      <div className="hidden lg:block font-sans">
+    <div className="min-h-screen bg-gray-50">
+      {/* Sidebar */}
+      <div className="hidden lg:block">
         <Sidebar />
       </div>
 
       <MobileSidebarDrawer isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
-      {/* Mobile Header */}
-      <div className="lg:hidden sticky top-0 z-30 bg-white border-b px-4 py-3 flex items-center gap-3 font-sans">
-        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-lg">
-          <Menu size={22} />
-        </button>
-        <h1 className="text-lg font-bold font-serif">Inventory Check</h1>
+      {/* Mobile top bar */}
+      <div className="lg:hidden sticky top-0 z-30 bg-white border-b px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setIsSidebarOpen(true)} className="p-2 -ml-2 hover:bg-gray-100 rounded-lg">
+            <Menu size={24} />
+          </button>
+          <h1 className="text-lg font-bold">Inventory</h1>
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div className="lg:ml-64 p-4 md:p-6 lg:p-8">
-        <h1 className="hidden lg:block text-3xl font-bold mb-6">Inventory Check</h1>
+      {/* Main content */}
+      <div className="lg:ml-64 min-h-screen pb-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
 
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 rounded-lg">
-            {error}
+          {/* Title + Global threshold */}
+          <div className="mb-6 space-y-5">
+            <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">Inventory Check</h1>
+
+            {/* Global Threshold */}
+            <div className="bg-white border rounded-xl p-5 shadow-sm">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Global Restock Alert Threshold
+              </label>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="e.g. 15"
+                  value={globalThreshold}
+                  onChange={e => setGlobalThreshold(e.target.value ? Number(e.target.value) : "")}
+                  className="w-full sm:w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-sm text-gray-600">
+                  {globalThreshold !== ""
+                    ? `Stock ≤ ${globalThreshold} → Critical`
+                    : "Using default: ≤5 Critical, ≤10 Low"}
+                </p>
+              </div>
+            </div>
           </div>
-        )}
 
-        {/* Global Threshold Input */}
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <label className="block text-sm font-medium text-blue-900 mb-2">
-            Global Restock Threshold (applies to all books)
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              type="number"
-              min="0"
-              placeholder="e.g., 15"
-              value={globalThreshold}
-              onChange={(e) => setGlobalThreshold(e.target.value ? Number(e.target.value) : "")}
-              className="w-32 px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-            <p className="text-sm text-blue-800">
-              {globalThreshold !== "" 
-                ? `Books with stock ≤ ${globalThreshold} → Critical + Restock Alert = Yes`
-                : "No threshold set — using default (≤5 Critical, ≤10 Low)"}
-            </p>
-          </div>
-        </div>
+          {/* Error */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-3">
+              <AlertCircle size={20} />
+              {error}
+            </div>
+          )}
 
-        {/* Search */}
-        <div className="relative mb-6 font-sans">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-green-600" />
-          <input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by book title or SKU..."
-            className="w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
-          />
-        </div>
-
-        {/* Loading State */}
-        {loading ? (
-          <div className="flex flex-col items-center py-12">
-            <Loader2 className="w-12 h-12 animate-spin text-green-600" />
-            <p className="mt-4 text-gray-600">Loading inventory...</p>
-          </div>
-        ) : (
-          <>
-            {/* Desktop Table */}
-            <div className="hidden md:block bg-white rounded-lg border shadow-sm overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="px-4 py-4 text-left">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.length === filteredInventory.length && filteredInventory.length > 0}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedRows(filteredInventory.map((i) => i.id));
-                          } else {
-                            setSelectedRows([]);
-                          }
-                        }}
-                      />
-                    </th>
-                    <th className="px-4 py-4 text-left">Cover</th>
-                    <th className="px-4 py-4 text-left">Book Title</th>
-                    <th className="px-4 py-4 text-left">SKU</th>
-                    <th className="px-4 py-4 text-left">Price</th>
-                    <th className="px-4 py-4 text-left">Stock</th>
-                    <th className="px-4 py-4 text-left">Stock Level</th>
-                    <th className="px-4 py-4 text-left">Restock Alert</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredInventory.map((item, index) => (
-                    <tr
-                      key={item.id}
-                      className={`hover:bg-gray-50 ${index !== filteredInventory.length - 1 ? "border-b" : ""}`}
-                    >
-                      <td className="px-4 py-4">
-                        <input
-                          type="checkbox"
-                          checked={selectedRows.includes(item.id)}
-                          onChange={() =>
-                            setSelectedRows((prev) =>
-                              prev.includes(item.id)
-                                ? prev.filter((id) => id !== item.id)
-                                : [...prev, item.id]
-                            )
-                          }
-                        />
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-gray-200">
-                          <img
-                            src={item.coverImage || PLACEHOLDER_IMAGE}
-                            alt={item.title}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 font-medium">{item.title}</td>
-                      <td className="px-4 py-4 text-green-600 font-mono text-sm">{item.sku}</td>
-                      <td className="px-4 py-4 font-medium">₹{item.price}</td>
-                      <td className="px-4 py-4 font-medium">{item.stockQuantity}</td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${getStockLevelColor(
-                            item.stockLevel
-                          )}`}
-                        >
-                          {item.stockLevel}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            item.restockAlert
-                              ? "bg-red-100 text-red-700"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {item.restockAlert ? "Yes" : "No"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Search + Actions */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="Search title or SKU..."
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
             </div>
 
-            {/* Actions */}
-            <div className="flex flex-wrap gap-4 mt-6 font-sans">
+            <div className="flex flex-wrap gap-3">
               <button
                 disabled={selectedRows.length === 0}
                 onClick={() => setShowUpdateModal(true)}
-                className={`px-6 py-3 rounded-lg font-medium transition ${
+                className={`px-5 py-2.5 rounded-lg font-medium flex items-center gap-2 transition ${
                   selectedRows.length === 0
                     ? "bg-gray-200 text-gray-500 cursor-not-allowed"
                     : "bg-green-600 text-white hover:bg-green-700"
                 }`}
               >
-                Update Selected ({selectedRows.length})
+                Update ({selectedRows.length})
               </button>
 
               <button
                 onClick={() => setShowExportModal(true)}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
               >
-                Export Inventory List
+                <Download size={18} />
+                Export
               </button>
             </div>
-          </>
-        )}
+          </div>
+
+          {/* Loading */}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <Loader2 className="w-12 h-12 animate-spin text-blue-600 mb-4" />
+              <p className="text-gray-600">Loading inventory...</p>
+            </div>
+          ) : filteredInventory.length === 0 ? (
+            <div className="bg-white rounded-xl p-10 text-center border border-gray-200">
+              <p className="text-gray-500 text-lg">No books found</p>
+              {searchTerm && <p className="text-sm mt-2">Try different search term</p>}
+            </div>
+          ) : (
+            <>
+              {/* Desktop Table - md+ */}
+              <div className="hidden md:block bg-white rounded-xl border shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3.5 text-left w-10">
+                          <input
+                            type="checkbox"
+                            checked={selectedRows.length === filteredInventory.length && filteredInventory.length > 0}
+                            onChange={e => {
+                              setSelectedRows(e.target.checked ? filteredInventory.map(i => i.id) : []);
+                            }}
+                          />
+                        </th>
+                        <th className="px-4 py-3.5 text-left w-24">Cover</th>
+                        <th className="px-4 py-3.5 text-left">Title</th>
+                        <th className="px-4 py-3.5 text-left">SKU</th>
+                        <th className="px-4 py-3.5 text-left">Price</th>
+                        <th className="px-4 py-3.5 text-left">Stock</th>
+                        <th className="px-4 py-3.5 text-left">Level</th>
+                        <th className="px-4 py-3.5 text-left">Alert</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {filteredInventory.map(item => (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-4">
+                            <input
+                              type="checkbox"
+                              checked={selectedRows.includes(item.id)}
+                              onChange={() => setSelectedRows(prev =>
+                                prev.includes(item.id) ? prev.filter(id => id !== item.id) : [...prev, item.id]
+                              )}
+                            />
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="w-14 h-20 rounded overflow-hidden border bg-gray-50">
+                              <img
+                                src={item.coverImage || PLACEHOLDER_IMAGE}
+                                alt={item.title}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 font-medium text-gray-900 max-w-xs truncate">{item.title}</td>
+                          <td className="px-4 py-4 text-sm font-mono text-gray-600">{item.sku}</td>
+                          <td className="px-4 py-4 font-medium">OMR {item.price}</td>
+                          <td className="px-4 py-4 font-medium">{item.stockQuantity}</td>
+                          <td className="px-4 py-4">
+                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${getStockLevelColor(item.stockLevel)}`}>
+                              {item.stockLevel}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${
+                              item.restockAlert ? "bg-red-100 text-red-800 border-red-300" : "bg-gray-100 text-gray-600 border-gray-300"
+                            }`}>
+                              {item.restockAlert ? "Yes" : "No"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Mobile Cards */}
+              <div className="md:hidden space-y-4">
+                {filteredInventory.map(item => (
+                  <div
+                    key={item.id}
+                    className="bg-white rounded-xl border shadow-sm p-4 flex gap-4"
+                  >
+                    {/* Checkbox + Image */}
+                    <div className="flex flex-col items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.includes(item.id)}
+                        onChange={() => setSelectedRows(prev =>
+                          prev.includes(item.id) ? prev.filter(id => id !== item.id) : [...prev, item.id]
+                        )}
+                        className="mt-1"
+                      />
+                      <div className="w-20 h-28 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
+                        <img
+                          src={item.coverImage || PLACEHOLDER_IMAGE}
+                          alt={item.title}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <h3 className="font-medium text-gray-900 line-clamp-2">{item.title}</h3>
+                      <p className="text-sm text-gray-600 font-mono">{item.sku}</p>
+                      <p className="text-sm font-medium">OMR {item.price}</p>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStockLevelColor(item.stockLevel)}`}>
+                          {item.stockLevel}
+                        </span>
+                        <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                          item.restockAlert ? "bg-red-100 text-red-800 border-red-300" : "bg-gray-100 text-gray-600 border-gray-300"
+                        }`}>
+                          Alert: {item.restockAlert ? "Yes" : "No"}
+                        </span>
+                      </div>
+
+                      <p className="text-sm text-gray-600 pt-1">
+                        Stock: <span className="font-medium">{item.stockQuantity}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* UPDATE MODAL */}
+      {/* Update Modal */}
       {showUpdateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
-            <h2 className="text-xl font-bold mb-5">Update Selected Books</h2>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <h2 className="text-xl font-bold mb-5">Bulk Update Selected Books</h2>
 
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Add Stock (increment)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Add Stock (increment)</label>
                 <input
                   type="number"
                   min="0"
-                  placeholder="e.g., 20"
+                  placeholder="e.g. 50"
                   value={addedStock}
-                  onChange={(e) => setAddedStock(e.target.value ? Number(e.target.value) : "")}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  onChange={e => setAddedStock(e.target.value ? Number(e.target.value) : "")}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">Leave blank to keep current stock</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  New Price (replace)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">New Price (override)</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  placeholder="e.g., 499"
+                  placeholder="e.g. 12.99"
                   value={updatedPrice}
-                  onChange={(e) => setUpdatedPrice(e.target.value ? Number(e.target.value) : "")}
-                  className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  onChange={e => setUpdatedPrice(e.target.value ? Number(e.target.value) : "")}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">Leave blank to keep current price</p>
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6">
+            <div className="flex justify-end gap-3 mt-8">
               <button
                 onClick={() => {
                   setShowUpdateModal(false);
                   setUpdatedPrice("");
                   setAddedStock("");
                 }}
-                className="px-5 py-2 border rounded-lg hover:bg-gray-100"
+                className="px-6 py-2.5 border rounded-lg hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleUpdateStock}
                 disabled={updating || (updatedPrice === "" && addedStock === "")}
-                className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className={`px-6 py-2.5 rounded-lg text-white font-medium flex items-center gap-2 min-w-[100px] justify-center ${
+                  updating || (updatedPrice === "" && addedStock === "")
+                    ? "bg-green-400 cursor-not-allowed"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}
               >
                 {updating && <Loader2 className="w-4 h-4 animate-spin" />}
                 Update
@@ -528,34 +512,26 @@ const InventoryCheck: React.FC = () => {
         </div>
       )}
 
-      {/* EXPORT MODAL */}
+      {/* Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-xl">
-            <h2 className="text-xl font-bold mb-5">Export Inventory Report</h2>
-            <div className="space-y-3">
-              <button
-                onClick={() => exportInventory("today")}
-                className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium"
-              >
-                Today
-              </button>
-              <button
-                onClick={() => exportInventory("weekly")}
-                className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium"
-              >
-                Last 7 Days
-              </button>
-              <button
-                onClick={() => exportInventory("monthly")}
-                className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 font-medium"
-              >
-                Last 30 Days
-              </button>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <h2 className="text-xl font-bold mb-5">Export Report</h2>
+            <div className="space-y-2">
+              {(["today", "weekly", "monthly"] as const).map(period => (
+                <button
+                  key={period}
+                  onClick={() => exportInventory(period)}
+                  className="w-full text-left px-5 py-3.5 rounded-xl hover:bg-gray-50 font-medium transition"
+                >
+                  {period === "today" ? "Today" :
+                   period === "weekly" ? "Last 7 days" : "Last 30 days"}
+                </button>
+              ))}
             </div>
             <button
               onClick={() => setShowExportModal(false)}
-              className="mt-5 text-sm text-gray-500 w-full text-center"
+              className="mt-6 w-full text-center text-gray-500 hover:text-gray-700 py-2"
             >
               Cancel
             </button>

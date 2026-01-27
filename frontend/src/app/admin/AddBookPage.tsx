@@ -9,9 +9,7 @@ interface BookFormData {
   author: string;
   category: string;
   isbn: string;
-  publisher: string;
-  publishedYear: string;
-  mrp: string;
+  omr: string;
   sellingPrice: string;
   stockQuantity: string;
   description: string;
@@ -26,9 +24,7 @@ const AddBookPage: React.FC = () => {
     author: '',
     category: '',
     isbn: '',
-    publisher: '',
-    publishedYear: '',
-    mrp: '',
+    omr: '',
     sellingPrice: '',
     stockQuantity: '',
     description: '',
@@ -42,7 +38,7 @@ const AddBookPage: React.FC = () => {
   const navigate = useNavigate();
 
   const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -84,37 +80,25 @@ const AddBookPage: React.FC = () => {
         throw new Error('Please log in as admin first');
       }
 
-      // Basic validation
+      // Updated validation: Author is now OPTIONAL
       if (!formData.title.trim()) throw new Error('Book title is required');
-      if (!formData.author.trim()) throw new Error('Author is required');
-      if (!formData.category) throw new Error('Category is required');
+      if (!formData.category.trim()) throw new Error('Category is required');
       if (!formData.sellingPrice || parseFloat(formData.sellingPrice) <= 0) 
         throw new Error('Valid selling price is required');
       if (!formData.stockQuantity || parseInt(formData.stockQuantity) < 0) 
         throw new Error('Valid stock quantity is required');
 
-      // Year validation
-      if (formData.publishedYear) {
-        const year = parseInt(formData.publishedYear, 10);
-        const currentYear = new Date().getFullYear();
-        if (year < 1900 || year > currentYear + 1) {
-          throw new Error(`Published year must be between 1900 and ${currentYear + 1}`);
-        }
-      }
-
       const formDataToSend = new FormData();
       formDataToSend.append('title', formData.title.trim());
-      formDataToSend.append('author', formData.author.trim());
-      formDataToSend.append('category', formData.category);
+      formDataToSend.append('author', formData.author.trim()); // Empty string is allowed
+      formDataToSend.append('category', formData.category.trim());
       formDataToSend.append('isbn', formData.isbn || '');
-      formDataToSend.append('publisher', formData.publisher || '');
-      formDataToSend.append('publishedYear', formData.publishedYear || '');
-      formDataToSend.append('mrp', formData.mrp || '');
+      formDataToSend.append('mrp', formData.omr || ''); // Backend expects 'mrp'
       formDataToSend.append('price', formData.sellingPrice);
       formDataToSend.append('stockQuantity', formData.stockQuantity);
       formDataToSend.append('description', formData.description || '');
-      formDataToSend.append('status', 'draft'); // Always saved as draft
-      
+      formDataToSend.append('status', 'draft');
+
       if (formData.coverImage) {
         formDataToSend.append('coverImage', formData.coverImage);
       }
@@ -192,101 +176,32 @@ const AddBookPage: React.FC = () => {
                 />
               </div>
 
-              {/* Author */}
+              {/* Author - Now OPTIONAL */}
               <div>
-                <label className={labelClass}>Author *</label>
+                <label className={labelClass}>Author</label>
                 <input 
                   name="author" 
-                  required 
                   value={formData.author} 
                   onChange={handleInputChange} 
                   className={inputClass} 
-                  placeholder="Enter author name" 
+                  placeholder="Enter author name (optional)" 
                 />
               </div>
 
-              {/* Category - UPDATED WITH COMPREHENSIVE OPTIONS */}
+              {/* Category - Free text */}
               <div>
                 <label className={labelClass}>Category *</label>
-                <div className="relative">
-                  <select 
-                    name="category" 
-                    required 
-                    value={formData.category} 
-                    onChange={handleInputChange} 
-                    className={`${inputClass} appearance-none cursor-pointer`}
-                  >
-                    <option value="">Select Category</option>
-                    
-                    {/* Fiction Categories */}
-                    <optgroup label="Fiction">
-                      <option value="literary-fiction">Literary Fiction</option>
-                      <option value="science-fiction">Science Fiction</option>
-                      <option value="fantasy">Fantasy</option>
-                      <option value="mystery-thriller">Mystery & Thriller</option>
-                      <option value="horror">Horror</option>
-                      <option value="romance">Romance</option>
-                      <option value="historical-fiction">Historical Fiction</option>
-                      <option value="young-adult">Young Adult</option>
-                      <option value="graphic-novels">Graphic Novels</option>
-                      <option value="short-stories">Short Stories</option>
-                      <option value="poetry">Poetry</option>
-                    </optgroup>
-                    
-                    {/* Non-Fiction Categories */}
-                    <optgroup label="Non-Fiction">
-                      <option value="biography-memoir">Biography & Memoir</option>
-                      <option value="history">History</option>
-                      <option value="science-nature">Science & Nature</option>
-                      <option value="technology-computers">Technology & Computers</option>
-                      <option value="business-economics">Business & Economics</option>
-                      <option value="self-help">Self-Help & Personal Development</option>
-                      <option value="health-fitness">Health & Fitness</option>
-                      <option value="travel">Travel</option>
-                      <option value="cooking-food">Cooking & Food</option>
-                      <option value="art-photography">Art & Photography</option>
-                      <option value="philosophy">Philosophy</option>
-                      <option value="psychology">Psychology</option>
-                    </optgroup>
-                    
-                    {/* Religious & Spiritual Books */}
-                    <optgroup label="Religious & Spiritual">
-                      <option value="hinduism">Hinduism</option>
-                      <option value="islam">Islam</option>
-                      <option value="christianity">Christianity</option>
-                      <option value="buddhism">Buddhism</option>
-                      <option value="judaism">Judaism</option>
-                      <option value="sikhism">Sikhism</option>
-                      <option value="other-religions">Other Religions</option>
-                      <option value="spirituality">Spirituality</option>
-                      <option value="yoga-meditation">Yoga & Meditation</option>
-                      <option value="mythology">Mythology</option>
-                    </optgroup>
-                    
-                    {/* Academic & Educational */}
-                    <optgroup label="Academic & Educational">
-                      <option value="textbooks">Textbooks</option>
-                      <option value="reference">Reference</option>
-                      <option value="childrens-books">Children's Books</option>
-                      <option value="educational">Educational</option>
-                      <option value="language-learning">Language Learning</option>
-                    </optgroup>
-                    
-                    {/* Additional Categories */}
-                    <optgroup label="Other Categories">
-                      <option value="humor">Humor</option>
-                      <option value="sports">Sports</option>
-                      <option value="music">Music</option>
-                      <option value="drama">Drama</option>
-                      <option value="essays">Essays</option>
-                      <option value="true-crime">True Crime</option>
-                    </optgroup>
-                  </select>
-                  <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 rotate-90 pointer-events-none" />
-                </div>
+                <input 
+                  name="category" 
+                  required 
+                  value={formData.category} 
+                  onChange={handleInputChange} 
+                  className={inputClass} 
+                  placeholder="e.g., Science Fiction, Self-Help, Spirituality" 
+                />
               </div>
 
-              {/* ISBN Number */}
+              {/* ISBN Number - Optional */}
               <div>
                 <label className={labelClass}>ISBN Number</label>
                 <input 
@@ -294,38 +209,8 @@ const AddBookPage: React.FC = () => {
                   value={formData.isbn} 
                   onChange={handleInputChange} 
                   className={inputClass} 
-                  placeholder="Enter ISBN number" 
+                  placeholder="Enter ISBN number (optional)" 
                 />
-              </div>
-
-              {/* Publisher */}
-              <div>
-                <label className={labelClass}>Publisher</label>
-                <input 
-                  name="publisher" 
-                  value={formData.publisher} 
-                  onChange={handleInputChange} 
-                  className={inputClass} 
-                  placeholder="Enter publisher" 
-                />
-              </div>
-
-              {/* Published Year - INPUT FIELD */}
-              <div>
-                <label className={labelClass}>Published Year</label>
-                <input 
-                  name="publishedYear" 
-                  type="number"
-                  min="1900" 
-                  max={new Date().getFullYear() + 1}
-                  value={formData.publishedYear} 
-                  onChange={handleInputChange} 
-                  className={inputClass} 
-                  placeholder={`e.g., ${new Date().getFullYear()}`} 
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Enter year between 1900 and {new Date().getFullYear() + 1}
-                </p>
               </div>
 
               {/* Pricing Section */}
@@ -333,17 +218,17 @@ const AddBookPage: React.FC = () => {
                 <h3 className="text-lg font-bold text-gray-900 mb-4">Pricing</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className={labelClass}>MRP (Maximum Retail Price)</label>
+                    <label className={labelClass}>Retail Price*</label>
                     <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">OMR</span>
                       <input 
-                        name="mrp" 
+                        name="omr" 
                         type="number"
                         step="0.01"
                         min="0"
-                        value={formData.mrp} 
+                        value={formData.omr} 
                         onChange={handleInputChange} 
-                        className={`${inputClass} pl-8`} 
+                        className={`${inputClass} pl-16`} 
                         placeholder="0.00" 
                       />
                     </div>
@@ -351,7 +236,7 @@ const AddBookPage: React.FC = () => {
                   <div>
                     <label className={labelClass}>Selling Price *</label>
                     <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">OMR</span>
                       <input 
                         name="sellingPrice" 
                         required 
@@ -360,7 +245,7 @@ const AddBookPage: React.FC = () => {
                         min="0.01"
                         value={formData.sellingPrice} 
                         onChange={handleInputChange} 
-                        className={`${inputClass} pl-8`} 
+                        className={`${inputClass} pl-16`} 
                         placeholder="0.00" 
                       />
                     </div>
@@ -385,7 +270,6 @@ const AddBookPage: React.FC = () => {
                       placeholder="0" 
                     />
                   </div>
-                  {/* SKU - AUTO-GENERATED */}
                   <div>
                     <label className={labelClass}>SKU (Stock Keeping Unit)</label>
                     <div className="flex items-center gap-2">
@@ -471,7 +355,7 @@ const AddBookPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Action Buttons - Only Save as Draft */}
+              {/* Action Buttons */}
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end items-center gap-4 pt-6 border-t border-gray-100">
                 <button 
                   type="button" 
@@ -481,7 +365,7 @@ const AddBookPage: React.FC = () => {
                   Cancel
                 </button>
                 <button 
-                  type="button" 
+                  type="button"
                   onClick={handleSubmit}
                   disabled={loading}
                   className="w-full sm:w-auto px-8 py-3 bg-blue-600 text-white rounded-lg text-base font-semibold hover:bg-blue-700 shadow-sm disabled:opacity-50 transition-colors"

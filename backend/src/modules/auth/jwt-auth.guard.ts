@@ -1,6 +1,4 @@
 // backend/src/auth/jwt-auth.guard.ts
-// Standard JWT Auth Guard for protecting routes
-
 import {
   Injectable,
   ExecutionContext,
@@ -11,19 +9,27 @@ import { AuthGuard } from '@nestjs/passport';
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
   canActivate(context: ExecutionContext) {
-    // You can add custom logic here later if needed
     return super.canActivate(context);
   }
 
   handleRequest(err: any, user: any, info: any) {
-    // This is called if authentication fails
+    // If there's an error or no user, throw a clear message
     if (err || !user) {
+      // More specific messages based on the info object from Passport
+      if (info?.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token expired');
+      }
+      if (info?.name === 'JsonWebTokenError') {
+        throw new UnauthorizedException('Invalid token');
+      }
+      if (info?.message === 'No auth token') {
+        throw new UnauthorizedException('Missing token');
+      }
+
+      // Fallback for any other case
       throw err || new UnauthorizedException('Invalid or missing token');
     }
-    // Check role if needed (optional)
-    // if (user.role !== 'ADMIN') {
-    //   throw new UnauthorizedException('Access denied. Admins only.');
-    // }
+
     return user;
   }
 }

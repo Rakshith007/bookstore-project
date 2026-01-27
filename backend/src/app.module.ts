@@ -7,6 +7,11 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CartModule } from './modules/cart/cart.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { AddressesModule } from './modules/addresses/addresses.module'; // ← Add this
+import { PaymentModule } from './modules/payment/payment.module'; // ← And this
+import { OrdersModule } from './modules/orders/orders.module'; // ← And this
+import { AdminModule } from './modules/admin/admin.module'; // ← And this
+import { ShipmentModule } from './modules/shipment/shipment.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -15,7 +20,12 @@ import { AddressesModule } from './modules/addresses/addresses.module'; // ← A
     BooksModule,
     CartModule,
     WishlistModule,
-    AddressesModule, // ← Add AddressesModule here
+    AddressesModule, 
+    PaymentModule,
+    OrdersModule,
+    AdminModule,
+    ShipmentModule,
+    UsersModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],

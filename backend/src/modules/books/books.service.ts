@@ -434,64 +434,109 @@ export class BooksService {
       message: 'Book updated successfully',
     };
   }
-
   async remove(id: number) {
     const book = await this.prisma.client.book.findUnique({
       where: { id },
+      include: { author: true, genre: true },
     });
-    
+
     if (!book) {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
-    
-    if (book.coverImageUrl) {
-      try {
-        const fileName = book.coverImageUrl.split('/').pop();
-        await this.supabase.storage
-          .from('book-covers')
-          .remove([fileName]);
-      } catch (error) {
-        this.logger.warn(`Failed to delete cover image for book ${id}: ${error.message}`);
-      }
-    }
-    
-    await this.prisma.client.book.delete({
-      where: { id },
+
+    // 1. Archive the book
+    await this.prisma.client.archivedBook.create({
+      data: {
+        originalId: book.id,
+        title: book.title,
+        author: book.author?.name,
+        genre: book.genre?.name,
+        price: book.price,
+        sku: book.sku,
+        barcode: book.barcode,
+        coverImageUrl: book.coverImageUrl,
+        description: book.description,
+        metadata: book.metadata ?? undefined,
+      },
     });
-    
+
+    // 2. Remove from cart & wishlist
+    await this.prisma.client.cartItem.deleteMany({ where: { bookId: id } });
+    await this.prisma.client.wishlist.deleteMany({ where: { bookId: id } });
+
+    // 3. Preserve reference for order history
+    await this.prisma.client.orderItem.updateMany({
+      where: { bookId: id },
+      data: {
+        originalBookId: id,
+        bookId: null,
+      },
+    });
+
+    // 4. Delete the book safely
+    await this.prisma.client.book.delete({ where: { id } });
+
     return {
       success: true,
-      message: 'Book deleted successfully',
+      message: 'Book archived and deleted successfully',
     };
   }
+
+
+
 
   async bulkDelete(ids: number[]) {
     const books = await this.prisma.client.book.findMany({
       where: { id: { in: ids } },
+      include: { author: true, genre: true },
     });
-    
+
     for (const book of books) {
-      if (book.coverImageUrl) {
-        try {
-          const fileName = book.coverImageUrl.split('/').pop();
-          await this.supabase.storage
-            .from('book-covers')
-            .remove([fileName]);
-        } catch (error) {
-          this.logger.warn(`Failed to delete cover image for book ${book.id}: ${error.message}`);
-        }
-      }
+      await this.prisma.client.archivedBook.create({
+        data: {
+          originalId: book.id,
+          title: book.title,
+          author: book.author?.name,
+          genre: book.genre?.name,
+          price: book.price,
+          sku: book.sku,
+          barcode: book.barcode,
+          coverImageUrl: book.coverImageUrl,
+          description: book.description,
+          metadata: book.metadata ?? undefined,
+        },
+      });
     }
-    
+
+    // Remove from cart & wishlist
+    await this.prisma.client.cartItem.deleteMany({
+      where: { bookId: { in: ids } },
+    });
+
+    await this.prisma.client.wishlist.deleteMany({
+      where: { bookId: { in: ids } },
+    });
+
+    // Preserve order history
+    await this.prisma.client.orderItem.updateMany({
+      where: { bookId: { in: ids } },
+      data: {
+        bookId: null,
+      },
+    });
+
+    // Delete books safely
     await this.prisma.client.book.deleteMany({
       where: { id: { in: ids } },
     });
-    
+
     return {
       success: true,
-      message: `${ids.length} book(s) deleted successfully`,
+      message: `${ids.length} book(s) archived and deleted successfully`,
     };
   }
+
+
 
   async getCategories() {
     const genres = await this.prisma.client.genre.findMany({

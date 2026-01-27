@@ -1,339 +1,608 @@
-import React, { useState, useMemo } from 'react';
-import { 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
   Search,
   Menu,
-  FileText
+  FileText,
+  Table,
+  Boxes,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle,
+  Package,
 } from 'lucide-react';
 import { Sidebar, MobileSidebarDrawer } from '../../components/layout/AdminSidebar';
+import * as XLSX from 'xlsx';
 
-// ================= TYPES =================
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const PAGE_SIZE = 20;
 
-type OrderStatus = 'Pending' | 'Packed' | 'Shipped' | 'Delivered' | 'Cancelled';
-
-interface OrderItem {
-  id: string;
-  title: string;
-  quantity: number;
-  price: number;
+/* --------------------------------------------------------------
+   Types
+   -------------------------------------------------------------- */
+interface Fulfillment {
+  id: number;
+  batchId: string;
+  booksFulfilled: number;
+  status: 'PICKED' | 'PACKED' | 'DELIVERED';
+  pickedAt: string | null;
+  packedAt: string | null;
+  deliveredAt: string | null;
+  internalTrackingId: string | null;
+  courier?: { name: string };
 }
 
-interface Order {
-  id: string;
-  date: string;
-  customer: string;
-  email: string;
-  phone: string;
-  address: string;
-  status: OrderStatus;
-  items: OrderItem[];
-  subtotal: number;
-  tax: number;
-  shipping: number;
-  total: number;
-  paymentMethod: string;
-}
-
-// ================= MOCK DATA =================
-
-const mockOrders: Order[] = [
-  { 
-    id: '#1001', 
-    date: '2023-09-15', 
-    customer: 'Liam Harper', 
-    email: 'liam@example.com',
-    phone: '+1 234 567 8900',
-    address: '123 Maple Ave, Springfield, IL',
-    status: 'Pending', 
-    items: [
-      { id: 'b1', title: 'The Great Gatsby', quantity: 1, price: 15.00 },
-      { id: 'b2', title: '1984', quantity: 2, price: 12.00 }
-    ],
-    subtotal: 39.00, tax: 2.00, shipping: 5.00, total: 46.00,
-    paymentMethod: 'Credit Card ending 4242'
-  },
-  { 
-    id: '#1002', 
-    date: '2023-09-14', 
-    customer: 'Olivia Bennett', 
-    email: 'olivia@example.com',
-    phone: '+1 234 567 8901',
-    address: '456 Oak Dr, Chicago, IL',
-    status: 'Pending',
-    items: [{ id: 'b3', title: 'To Kill a Mockingbird', quantity: 1, price: 18.00 }],
-    subtotal: 18.00, tax: 1.50, shipping: 5.00, total: 24.50,
-    paymentMethod: 'PayPal'
-  },
-  { 
-    id: '#1003', 
-    date: '2023-09-13', 
-    customer: 'Noah Carter', 
-    email: 'noah@example.com',
-    phone: '+1 234 567 8902',
-    address: '789 Pine Ln, Seattle, WA',
-    status: 'Packed', 
-    items: [{ id: 'b4', title: 'Pride and Prejudice', quantity: 3, price: 14.00 }],
-    subtotal: 42.00, tax: 3.00, shipping: 0.00, total: 45.00,
-    paymentMethod: 'Credit Card ending 1234'
-  },
-  { 
-    id: '#1004', 
-    date: '2023-09-12', 
-    customer: 'Emma Davis', 
-    email: 'emma@example.com',
-    phone: '+1 234 567 8903',
-    address: '101 Elm St, Austin, TX',
-    status: 'Shipped', 
-    items: [{ id: 'b5', title: 'The Catcher in the Rye', quantity: 1, price: 10.00 }],
-    subtotal: 10.00, tax: 0.80, shipping: 5.00, total: 15.80,
-    paymentMethod: 'Credit Card ending 8888'
-  },
-  { 
-    id: '#1005', 
-    date: '2023-09-11', 
-    customer: 'Ethan Foster', 
-    email: 'ethan@example.com',
-    phone: '+1 234 567 8904',
-    address: '202 Birch Rd, Denver, CO',
-    status: 'Delivered', 
-    items: [{ id: 'b6', title: 'The Hobbit', quantity: 1, price: 20.00 }],
-    subtotal: 20.00, tax: 1.60, shipping: 5.00, total: 26.60,
-    paymentMethod: 'Apple Pay'
-  },
-  { 
-    id: '#1006', 
-    date: '2023-09-10', 
-    customer: 'Ava Green', 
-    email: 'ava@example.com',
-    phone: '+1 234 567 8905',
-    address: '303 Cedar Blvd, Miami, FL',
-    status: 'Cancelled', 
-    items: [{ id: 'b7', title: 'Moby Dick', quantity: 1, price: 22.00 }],
-    subtotal: 22.00, tax: 1.80, shipping: 5.00, total: 28.80,
-    paymentMethod: 'Credit Card ending 5555'
-  },
-];
-
-type TabType = 'All' | OrderStatus;
-
-// ================= COMPONENTS =================
-
-const StatusBadge = ({ status }: { status: OrderStatus }) => {
-  const styles = {
-    Pending: 'bg-yellow-100 text-yellow-800',
-    Packed: 'bg-indigo-100 text-indigo-800',
-    Shipped: 'bg-purple-100 text-purple-800',
-    Delivered: 'bg-green-100 text-green-800',
-    Cancelled: 'bg-red-100 text-red-800',
+interface RawOrder {
+  orderNumber: string;
+  orderDate: string;
+  user: {
+    fullName: string;
+    email: string;
+    phoneNumber: string;
+  } | null;
+  totalAmount: number;
+  paymentMethod: {
+    methodType: string;
+  } | null;
+  status: string;
+  fulfillments: Fulfillment[];
+  // NEW: Added calculated fields from backend
+  _calculated?: {
+    totalBooks: number;
+    pickedBooks: number;
+    packedBooks: number;
+    deliveredBooks: number;
+    totalFulfilled: number;
+    remainingBooks: number;
+    isPartiallyFulfilled: boolean;
   };
+}
 
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
+interface OrderRecord {
+  orderNumber: string;
+  orderDate: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  totalAmount: number;
+  paymentMethod: string;
+  orderStatus: 'Processing' | 'Completed';
+  // NEW: Show fulfillment details
+  fulfillmentDetails?: string;
+}
+
+interface FulfillmentRecord {
+  id: number;
+  orderNumber: string;
+  batchId: string;
+  booksFulfilled: number;
+  status: 'PICKED' | 'PACKED' | 'DELIVERED';
+  deliveredAt: string | null;
+  internalTrackingId: string | null;
+  courier: string | null;
+  orderDate: string;
+  customerName: string;
+  // NEW: Added original order status for context
+  originalOrderStatus: string;
+}
+
+type ViewTab = 'orders' | 'fulfillments';
+
+/* --------------------------------------------------------------
+   Status Badge – updated to show correct status
+   -------------------------------------------------------------- */
+const StatusBadge = ({ status, details }: { status: 'Processing' | 'Completed', details?: string }) => (
+  <div className="flex flex-col gap-1">
+    <span
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+        status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+      }`}
+    >
+      {status === 'Completed' ? <CheckCircle size={14} /> : <Package size={14} />}
       {status}
     </span>
+    {details && (
+      <span className="text-xs text-gray-500">{details}</span>
+    )}
+  </div>
+);
+
+/* --------------------------------------------------------------
+   Pagination (unchanged)
+   -------------------------------------------------------------- */
+const Pagination = ({
+  currentPage,
+  totalItems,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+}) => {
+  const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex items-center justify-between mt-8 px-4 py-3 bg-white border border-gray-200 rounded-lg shadow-sm">
+      <div className="text-sm text-gray-600">
+        Showing {(currentPage - 1) * PAGE_SIZE + 1} to {Math.min(currentPage * PAGE_SIZE, totalItems)} of{' '}
+        {totalItems} items
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          className="p-2 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <span className="text-sm font-medium text-gray-900">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          className="p-2 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
+    </div>
   );
 };
 
-// Removed OrderDetailsModal component completely
+/* --------------------------------------------------------------
+   HELPER: Calculate correct order status based on fulfillments
+   -------------------------------------------------------------- */
+const calculateOrderStatus = (order: RawOrder): 'Processing' | 'Completed' => {
+  // If backend already provides calculated fields, use them
+  if (order._calculated) {
+    const { totalFulfilled, totalBooks } = order._calculated;
+    
+    // Order is "Completed" if ALL books are fulfilled (PICKED, PACKED, or DELIVERED)
+    if (totalFulfilled >= totalBooks) {
+      return 'Completed';
+    }
+    
+    // Otherwise, it's still "Processing"
+    return 'Processing';
+  }
+  
+  // Fallback: Calculate manually from fulfillments
+  const totalBooks = 100; // Default - should come from orderItems calculation
+  
+  const totalFulfilled = order.fulfillments.reduce((sum, f) => {
+    if (['PICKED', 'PACKED', 'DELIVERED'].includes(f.status)) {
+      return sum + f.booksFulfilled;
+    }
+    return sum;
+  }, 0);
+  
+  return totalFulfilled >= totalBooks ? 'Completed' : 'Processing';
+};
 
-const MobileOrderCard = ({ order }: { order: Order }) => (
-  <div className="bg-white p-4 rounded-lg border border-gray-200 mb-3 shadow-sm">
-    <div className="flex justify-between items-start mb-3">
-      <div>
-        <span className="text-sm font-bold text-gray-900 block">{order.id}</span>
-        <span className="text-xs text-gray-500">{order.date}</span>
-      </div>
-      <StatusBadge status={order.status} />
-    </div>
-    <div className="flex justify-between items-center border-t border-gray-100 pt-3">
-      <div className="text-sm text-gray-700">
-        <span className="text-gray-500 text-xs block">Customer</span>
-        {order.customer}
-      </div>
-      {/* Total display removed */}
+/* --------------------------------------------------------------
+   HELPER: Get fulfillment details for display
+   -------------------------------------------------------------- */
+const getFulfillmentDetails = (order: RawOrder): string | undefined => {
+  if (!order._calculated) return undefined;
+  
+  const { totalBooks, totalFulfilled, remainingBooks } = order._calculated;
+  
+  if (totalFulfilled === 0) {
+    return `${totalBooks} books pending`;
+  } else if (totalFulfilled >= totalBooks) {
+    return `All ${totalBooks} books fulfilled`;
+  } else {
+    return `${totalFulfilled}/${totalBooks} fulfilled, ${remainingBooks} remaining`;
+  }
+};
+
+/* --------------------------------------------------------------
+   Orders Table – shows CORRECT status now
+   -------------------------------------------------------------- */
+const OrdersView = ({ orders }: { orders: OrderRecord[] }) => (
+  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Order ID
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Date
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Customer
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Total Amount
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Order Status
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Fulfillment
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200">
+          {orders.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-6 py-16 text-center text-gray-500">
+                No orders found
+              </td>
+            </tr>
+          ) : (
+            orders.map((o) => (
+              <tr key={o.orderNumber} className="hover:bg-gray-50 transition">
+                <td className="px-6 py-5 font-medium text-gray-900">{o.orderNumber}</td>
+                <td className="px-6 py-5 text-sm text-gray-600">
+                  {new Date(o.orderDate).toLocaleDateString('en-IN')}
+                </td>
+                <td className="px-6 py-5 text-sm text-gray-600">
+                  <div className="font-medium">{o.customerName}</div>
+                  <div className="text-xs text-gray-400">{o.customerEmail}</div>
+                </td>
+                <td className="px-6 py-5 text-sm font-medium">OMR {o.totalAmount.toFixed(2)}</td>
+                <td className="px-6 py-5">
+                  <StatusBadge status={o.orderStatus} details={o.fulfillmentDetails} />
+                </td>
+                <td className="px-6 py-5 text-sm text-gray-500">
+                  {o.orderStatus === 'Completed' ? (
+                    <span className="text-green-600 font-medium">✓ Fulfilled</span>
+                  ) : (
+                    <span className="text-orange-600 font-medium">In Progress</span>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   </div>
 );
 
-const OrdersTable = ({ orders }: { orders: Order[] }) => {
-  return (
-    <>
-      <div className="block md:hidden">
-        {orders.map((order) => (
-          <MobileOrderCard key={order.id} order={order} />
-        ))}
-        {orders.length === 0 && <p className="text-center text-gray-500 py-8">No orders found.</p>}
-      </div>
-
-      <div className="hidden md:block bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
-              <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
-              <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
-              <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-              {/* Total header removed */}
+/* --------------------------------------------------------------
+   Fulfillments Table – unchanged
+   -------------------------------------------------------------- */
+const FulfillmentsView = ({ fulfillments }: { fulfillments: FulfillmentRecord[] }) => (
+  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Order ID
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Batch ID
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Books
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Customer
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Tracking / Courier
+            </th>
+            <th className="text-left px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Status
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200">
+          {fulfillments.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-6 py-16 text-center text-gray-500">
+                No fulfillment records found
+              </td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {orders.map((order) => (
-              <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                <td className="px-6 py-4 text-sm font-medium text-gray-900">{order.id}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">{order.date}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  <div className="font-medium text-gray-900">{order.customer}</div>
-                  <div className="text-xs text-gray-400">{order.email}</div>
+          ) : (
+            fulfillments.map((f) => (
+              <tr key={f.id} className="hover:bg-gray-50 transition">
+                <td className="px-6 py-5 font-medium text-gray-900">{f.orderNumber}</td>
+                <td className="px-6 py-5 text-sm font-medium text-purple-600">{f.batchId}</td>
+                <td className="px-6 py-5 text-sm text-center font-medium">{f.booksFulfilled}</td>
+                <td className="px-6 py-5 text-sm text-gray-600">
+                  <div className="font-medium">{f.customerName}</div>
                 </td>
-                <td className="px-6 py-4">
-                  <StatusBadge status={order.status} />
+                <td className="px-6 py-5 text-sm">
+                  {f.internalTrackingId && (
+                    <div className="text-blue-600 text-xs">Tracking: {f.internalTrackingId}</div>
+                  )}
+                  {f.courier && (
+                    <div className="text-gray-600 text-xs mt-1">Courier: {f.courier}</div>
+                  )}
+                  {!f.internalTrackingId && !f.courier && <span className="text-gray-400 text-xs">—</span>}
                 </td>
-                {/* Total cell removed */}
+                <td className="px-6 py-5">
+                  <span
+                    className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
+                      f.status === 'DELIVERED' ? 'bg-green-100 text-green-800' :
+                      f.status === 'PACKED' ? 'bg-blue-100 text-blue-800' :
+                      'bg-yellow-100 text-yellow-800'
+                    }`}
+                  >
+                    {f.status}
+                  </span>
+                </td>
               </tr>
-            ))}
-            {orders.length === 0 && (
-               <tr>
-                 <td colSpan={4} className="px-6 py-8 text-center text-gray-500">No orders found matching your criteria.</td>
-               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-};
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
 
-// Main Page Component
+/* --------------------------------------------------------------
+   Main Page
+   -------------------------------------------------------------- */
 const OrdersPage = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('All');
+  const [activeView, setActiveView] = useState<ViewTab>('orders');
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Removed selectedOrder state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [fulfillments, setFulfillments] = useState<FulfillmentRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
-  const tabs: TabType[] = ['All', 'Pending', 'Packed', 'Shipped', 'Delivered', 'Cancelled'];
+  useEffect(() => {
+    const fetchData = async () => {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
 
-  const filteredOrders = useMemo(() => {
-    let filtered = mockOrders;
+      try {
+        setLoading(true);
+        const resp = await fetch(`${API_BASE}/admin/orders`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
 
-    if (activeTab !== 'All') {
-      filtered = filtered.filter(order => order.status === activeTab);
-    }
+        if (!resp.ok) throw new Error('Failed to fetch');
 
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        order =>
-          order.id.toLowerCase().includes(query) ||
-          order.customer.toLowerCase().includes(query) ||
-          order.email.toLowerCase().includes(query)
+        const json = await resp.json();
+        const rawOrders: RawOrder[] = json.success && Array.isArray(json.data) ? json.data : [];
+
+        // ============ FIXED: CORRECT STATUS CALCULATION ============
+        const orderRecords: OrderRecord[] = rawOrders.map((o) => {
+          // Use the new correct logic to determine if order is completed
+          const displayStatus = calculateOrderStatus(o);
+          const fulfillmentDetails = getFulfillmentDetails(o);
+
+          return {
+            orderNumber: o.orderNumber,
+            orderDate: o.orderDate,
+            customerName: o.user?.fullName || 'Guest Customer',
+            customerEmail: o.user?.email || 'N/A',
+            customerPhone: o.user?.phoneNumber || 'N/A',
+            totalAmount: Number(o.totalAmount),
+            paymentMethod: o.paymentMethod?.methodType || 'Unknown',
+            orderStatus: displayStatus, // CORRECT: "Completed" or "Processing"
+            fulfillmentDetails,
+          };
+        });
+
+        // Fulfillments stay raw
+        const fulfillmentRecords: FulfillmentRecord[] = rawOrders.flatMap((o) =>
+          o.fulfillments.map((f) => ({
+            id: f.id,
+            orderNumber: o.orderNumber,
+            batchId: f.batchId,
+            booksFulfilled: f.booksFulfilled,
+            status: f.status,
+            deliveredAt: f.deliveredAt,
+            internalTrackingId: f.internalTrackingId,
+            courier: f.courier?.name || null,
+            orderDate: o.orderDate,
+            customerName: o.user?.fullName || 'Guest',
+            originalOrderStatus: o.status, // Show actual order status
+          }))
+        );
+
+        setOrders(orderRecords);
+        setFulfillments(fulfillmentRecords);
+        
+        // DEBUG: Log problematic orders
+        console.log("=== ORDER STATUS DEBUG ===");
+        rawOrders.forEach(o => {
+          const calculated = calculateOrderStatus(o);
+          console.log(`${o.orderNumber}: Backend status="${o.status}", Calculated="${calculated}"`);
+        });
+        
+      } catch (e) {
+        console.error(e);
+        setOrders([]);
+        setFulfillments([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeView, searchQuery]);
+
+  const baseData = activeView === 'orders' ? orders : fulfillments;
+
+  const filteredData = useMemo(() => {
+    if (!searchQuery) return baseData;
+
+    const q = searchQuery.toLowerCase();
+
+    if (activeView === 'orders') {
+      return (baseData as OrderRecord[]).filter(
+        (o) =>
+          o.orderNumber.toLowerCase().includes(q) ||
+          o.customerName.toLowerCase().includes(q) ||
+          o.customerEmail.toLowerCase().includes(q)
       );
     }
 
-    return filtered;
-  }, [activeTab, searchQuery]);
+    return (baseData as FulfillmentRecord[]).filter(
+      (f) =>
+        f.orderNumber.toLowerCase().includes(q) ||
+        f.batchId.toLowerCase().includes(q) ||
+        f.customerName.toLowerCase().includes(q)
+    );
+  }, [baseData, searchQuery, activeView]);
 
-  // === EXPORT FUNCTIONALITY ===
-  const handleExportReport = () => {
-    if (filteredOrders.length === 0) {
-        alert('No data to export!');
-        return;
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredData.slice(start, start + PAGE_SIZE);
+  }, [filteredData, currentPage]);
+
+  const totalItems = filteredData.length;
+
+  const exportCurrentView = () => {
+    let rows: any[] = [];
+    let sheetName = '';
+    let fileName = '';
+
+    if (activeView === 'orders') {
+      rows = (filteredData as OrderRecord[]).map((o) => ({
+        'Order ID': o.orderNumber,
+        'Date': new Date(o.orderDate).toLocaleDateString('en-IN'),
+        'Customer': o.customerName,
+        'Email': o.customerEmail,
+        'Phone': o.customerPhone,
+        'Total': o.totalAmount.toFixed(2),
+        'Payment': o.paymentMethod,
+        'Status': o.orderStatus,
+        'Fulfillment Details': o.fulfillmentDetails || '',
+      }));
+      sheetName = 'Orders';
+      fileName = 'Orders_Report';
+    } else {
+      rows = (filteredData as FulfillmentRecord[]).map((f) => ({
+        'Order ID': f.orderNumber,
+        'Batch ID': f.batchId,
+        'Books': f.booksFulfilled,
+        'Status': f.status,
+        'Delivered': f.deliveredAt ? new Date(f.deliveredAt).toLocaleDateString('en-IN') : '—',
+        'Tracking': f.internalTrackingId || '—',
+        'Courier': f.courier || '—',
+        'Order Status': f.originalOrderStatus,
+      }));
+      sheetName = 'Fulfillments';
+      fileName = 'Fulfillments_Report';
     }
 
-    // 1. Define Headers
-    const headers = [
-        'Order ID',
-        'Date',
-        'Customer Name',
-        'Email',
-        'Phone',
-        'Address',
-        'Status',
-        'Payment Method',
-        'Total Amount'
-    ];
-
-    // 2. Format Data Rows (Handle commas in strings by wrapping in quotes)
-    const rows = filteredOrders.map(order => [
-        order.id,
-        order.date,
-        `"${order.customer}"`, 
-        order.email,
-        order.phone,
-        `"${order.address}"`,
-        order.status,
-        `"${order.paymentMethod}"`,
-        order.total.toFixed(2)
-    ]);
-
-    // 3. Combine Headers and Rows
-    const csvContent = [
-        headers.join(','), 
-        ...rows.map(row => row.join(','))
-    ].join('\n');
-
-    // 4. Create Blob and Download Link
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `orders_report_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    XLSX.writeFile(wb, `${fileName}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setShowExportMenu(false);
   };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-lg text-gray-600">Loading data…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="lg:ml-72 min-h-screen bg-gray-50 transition-all duration-300">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-1">Orders Management</h1>
-            <p className="text-gray-500 text-sm">Track and manage order lifecycle.</p>
+            <h1 className="text-3xl font-bold text-gray-900">Orders Management</h1>
+            <p className="text-gray-600 mt-2">View and track all customer orders and fulfillments</p>
           </div>
-          <button 
-            onClick={handleExportReport}
-            className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors shadow-sm"
-          >
-            <FileText size={16} />
-            Export Report
-          </button>
-        </div>
 
-        <div className="mb-6">
-          <div className="flex gap-2 border-b border-gray-200 overflow-x-auto pb-1 scrollbar-hide">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`pb-3 px-3 text-sm font-medium transition-colors relative whitespace-nowrap ${
-                  activeTab === tab
-                    ? 'text-black border-b-2 border-black'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-t-md'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="flex items-center gap-2 bg-black text-white px-5 py-3 rounded-lg font-medium hover:bg-gray-800 shadow-sm transition"
+            >
+              <FileText size={18} />
+              Export Current View
+            </button>
+
+            {showExportMenu && (
+              <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                <div className="px-4 py-2 text-sm text-gray-600 border-b">Exports current tab only</div>
+                <button
+                  onClick={exportCurrentView}
+                  className="w-full text-left px-4 py-3 text-sm hover:bg-gray-100 flex items-center gap-3 transition"
+                >
+                  <FileText size={16} /> Download Report
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="mb-6">
+          <div className="flex gap-1 border-b border-gray-200">
+            <button
+              onClick={() => setActiveView('orders')}
+              className={`pb-3 px-6 text-sm font-medium transition-colors relative flex items-center gap-2 ${
+                activeView === 'orders'
+                  ? 'text-black border-b-2 border-black'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Table size={18} />
+              Orders ({orders.length})
+            </button>
+            <button
+              onClick={() => setActiveView('fulfillments')}
+              className={`pb-3 px-6 text-sm font-medium transition-colors relative flex items-center gap-2 ${
+                activeView === 'fulfillments'
+                  ? 'text-black border-b-2 border-black'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Boxes size={18} />
+              Fulfillments ({fulfillments.length})
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-8">
           <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
             <input
               type="text"
-              placeholder="Search by ID, Customer, or Email"
+              placeholder={
+                activeView === 'fulfillments'
+                  ? 'Search by order ID or batch ID...'
+                  : 'Search orders by ID, customer name or email...'
+              }
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-200 shadow-sm"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black transition"
             />
           </div>
         </div>
 
-        <OrdersTable orders={filteredOrders} />
+        {activeView === 'orders' ? (
+          <>
+            <OrdersView orders={paginatedData as OrderRecord[]} />
+            <Pagination currentPage={currentPage} totalItems={totalItems} onPageChange={setCurrentPage} />
+          </>
+        ) : (
+          <>
+            <FulfillmentsView fulfillments={paginatedData as FulfillmentRecord[]} />
+            <Pagination currentPage={currentPage} totalItems={totalItems} onPageChange={setCurrentPage} />
+          </>
+        )}
       </div>
-
-      {/* Modal rendering removed */}
     </div>
   );
 };
@@ -344,21 +613,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />
-      <MobileSidebarDrawer
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-      />
+      <MobileSidebarDrawer isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
-      <div className="lg:hidden flex items-center justify-between p-4 bg-white border-b sticky top-0 z-20">
-        <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsSidebarOpen(true)}
-              className="p-2 -ml-2 hover:bg-gray-100 rounded-md transition-colors"
-            >
-              <Menu size={24} className="text-gray-700" />
-            </button>
-            <h1 className="font-semibold text-lg text-gray-900">Orders</h1>
-        </div>
+      <div className="lg:hidden sticky top-0 z-30 bg-white border-b px-4 py-4 flex items-center gap-3 shadow-sm">
+        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-lg transition">
+          <Menu size={24} />
+        </button>
+        <h1 className="text-lg font-semibold">Orders Management</h1>
       </div>
 
       <OrdersPage />

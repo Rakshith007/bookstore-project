@@ -237,7 +237,7 @@ const BooksTable: React.FC<{
               <td className="px-6 py-4 text-sm text-gray-600">{book.author}</td>
               <td className="px-6 py-4 text-sm text-gray-600">{book.category || book.genre}</td>
               <td className="px-6 py-4 text-sm text-gray-900">
-                ${book.price.toFixed(2)}
+                OMR {book.price.toFixed(2)}
               </td>
               <td className="px-6 py-4 text-sm text-gray-900">{book.stockQuantity || book.stock}</td>
               <td className="px-6 py-4">
@@ -294,7 +294,7 @@ const BookCard: React.FC<{
           <p className="text-sm text-gray-600 mb-3 truncate">{book.category || book.genre}</p>
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="text-gray-900 font-medium">
-              ${book.price.toFixed(2)}
+              OMR {book.price.toFixed(2)}
             </span>
             <span className="text-gray-600">Stock: {book.stockQuantity || book.stock}</span>
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -473,11 +473,8 @@ const BooksManagementPage: React.FC = () => {
       const token = getToken();
       if (!token) throw new Error('Authentication required');
 
-      // You'll need to create this function in booksApi.ts
-      // It should PATCH /books/:id/status with { status: "available" }
       await Promise.all(
         selectedBooks.map(bookId => 
-          // Replace with your actual API call
           fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/books/${bookId}/status`, {
             method: 'PATCH',
             headers: {
@@ -631,7 +628,7 @@ const BooksManagementPage: React.FC = () => {
                         }}
                       />
                       <p className="text-xs text-gray-700 truncate font-medium">{book.title}</p>
-                      <p className="text-xs text-gray-500">${book.price.toFixed(2)}</p>
+                      <p className="text-xs text-gray-500">OMR {book.price.toFixed(2)}</p>
                     </div>
                   ))}
               </div>

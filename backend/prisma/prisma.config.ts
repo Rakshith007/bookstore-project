@@ -1,4 +1,10 @@
-// prisma/prisma.config.ts (CORRECTED)
-export default {
-  datasourceUrl: process.env.DATABASE_URL,
-}
+// prisma/prisma.config.ts
+import 'dotenv/config';
+import { defineConfig, env } from 'prisma/config';
+
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  datasource: {
+    url: env('DIRECT_URL'),  // Use direct connection for CLI/migrations (more reliable on mobile networks)
+  },
+});

@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtStrategy } from './jwt.strategy';         // ← NEW: JWT validation strategy
 import { JwtAuthGuard } from './jwt-auth.guard';       // ← NEW: Guard for @UseGuards()
+import { RolesGuard } from './roles.guard'; // ← ADD THIS
 
 @Module({
   imports: [
@@ -25,9 +26,11 @@ import { JwtAuthGuard } from './jwt-auth.guard';       // ← NEW: Guard for @Us
     PrismaService,
     JwtStrategy,      // ← Required for Passport to validate tokens
     JwtAuthGuard,     // ← Optional but recommended
+    RolesGuard,           // ← ADD THIS
   ],
   exports: [
     JwtAuthGuard,     // ← IMPORTANT: Allows other modules (like BooksModule) to use the guard
+    RolesGuard,           // ← ALSO EXPORT IT (good practice)
   ],
 })
 export class AuthModule {}

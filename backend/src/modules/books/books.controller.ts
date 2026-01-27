@@ -1,4 +1,3 @@
-// backend/src/modules/books/books.controller.ts
 import { 
   Controller, 
   Post, 
@@ -16,39 +15,66 @@ import {
 } from '@nestjs/common';
 import { BooksService } from './books.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-// Uncomment these imports when you create the DTO files
+import { JwtAuthGuard } from '../../modules/auth/jwt-auth.guard';
+import { RolesGuard } from '../../modules/auth/roles.guard';
+import { Roles } from '../../modules/auth/roles.decorator';
+import { Role } from '@prisma/client';
+
+// Uncomment DTOs when ready
 // import { BookFilterDto } from '../dto/BookFilterDto';
 // import { UpdateBookDto } from '../dto/UpdateBookDto';
 // import { BulkDeleteDto } from '../dto/BulkDeleteDto';
 // import { UpdateStatusDto } from '../dto/UpdateStatusDto';
-// import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 @Controller('books')
-// @UseGuards(JwtAuthGuard) // Uncomment if you have authentication
 export class BooksController {
   constructor(private readonly booksService: BooksService) {}
 
-  // ✅ Create new book
-  @Post()
-  @UseInterceptors(FileInterceptor('coverImage'))
-  async create(@Body() dto: any, @UploadedFile() coverImage?: Express.Multer.File) {
-    return this.booksService.createBook(dto, coverImage);
-  }
+  // ────────────────────────────────────────────────
+  // PUBLIC READ ENDPOINTS (no auth needed)
+  // ────────────────────────────────────────────────
 
-  // ✅ Get all books with filters (admin panel uses this)
+  // Get all books (with filters) - public for customers
   @Get()
   async findAll(@Query() filters?: any) {
     return this.booksService.findAll(filters);
   }
 
-  // ✅ Get single book by ID
+  // Get single book by ID - public for product detail page
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return this.booksService.findOne(id);
   }
 
-  // ✅ Update book
+  // Get categories (genres) - public
+  @Get('categories')
+  async getCategories() {
+    return this.booksService.getCategories();
+  }
+
+  // Get authors - public
+  @Get('authors')
+  async getAuthors() {
+    return this.booksService.getAuthors();
+  }
+
+  // ────────────────────────────────────────────────
+  // ADMIN-ONLY WRITE OPERATIONS
+  // ────────────────────────────────────────────────
+
+  // Create new book - ADMIN only
+  @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @UseInterceptors(FileInterceptor('coverImage'))
+  async create(@Body() dto: any, @UploadedFile() coverImage?: Express.Multer.File) {
+    return this.booksService.createBook(dto, coverImage);
+  }
+
+  // Update book - ADMIN only
   @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @UseInterceptors(FileInterceptor('coverImage'))
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -58,20 +84,26 @@ export class BooksController {
     return this.booksService.update(id, dto, coverImage);
   }
 
-  // ✅ Delete single book
+  // Delete single book - ADMIN only
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   async remove(@Param('id', ParseIntPipe) id: number) {
     return this.booksService.remove(id);
   }
 
-  // ✅ Bulk delete books
+  // Bulk delete books - ADMIN only
   @Delete('bulk')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   async bulkDelete(@Body() bulkDeleteDto: any) {
     return this.booksService.bulkDelete(bulkDeleteDto.ids);
   }
 
-  // ✅ Update single book status (e.g., draft → available)
+  // Update single book status - ADMIN only
   @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   async updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateStatusDto: any,
@@ -79,21 +111,11 @@ export class BooksController {
     return this.booksService.updateStatus(id, updateStatusDto);
   }
 
-  // ✅ NEW: Bulk update status — used by "Add to Products"
+  // Bulk update status (e.g. "Add to Products") - ADMIN only
   @Patch('bulk/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   async bulkUpdateStatus(@Body() body: { ids: number[]; status: string }) {
     return this.booksService.bulkUpdateStatus(body.ids, body.status);
-  }
-
-  // ✅ Get all categories (genres)
-  @Get('categories')
-  async getCategories() {
-    return this.booksService.getCategories();
-  }
-
-  // ✅ Get all authors
-  @Get('authors')
-  async getAuthors() {
-    return this.booksService.getAuthors();
   }
 }

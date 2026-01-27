@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Grid3x3, AlignLeft, ChevronLeft, ChevronRight, BookOpen, Calendar, Building2 } from 'lucide-react';
+import { Grid3x3, AlignLeft, ChevronLeft, ChevronRight, BookOpen, Calendar } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 
 interface Book {
@@ -53,7 +53,6 @@ const BookSearchPage: React.FC = () => {
 
   const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
-  // Sync searchQuery with URL params
   useEffect(() => {
     const query = searchParams.get('q') || '';
     if (query !== searchQuery) {
@@ -62,7 +61,6 @@ const BookSearchPage: React.FC = () => {
     }
   }, [searchParams, searchQuery]);
 
-  // Fetch books — now only available ones
   const fetchBooks = async (search = '', pageNum = 1) => {
     setLoading(true);
     setError(null);
@@ -71,10 +69,9 @@ const BookSearchPage: React.FC = () => {
       const params = new URLSearchParams({
         page: pageNum.toString(),
         limit: '12',
-        status: 'available', // ← This filters only published books
+        status: 'available',
       });
 
-      // Add search query if provided
       if (search.trim()) {
         params.append('search', search.trim());
       }
@@ -89,12 +86,12 @@ const BookSearchPage: React.FC = () => {
       const data: ApiResponse = await response.json();
       
       if (data.success && data.data) {
-        const mappedBooks: Book[] = data.data.map((book, index) => ({
+        const mappedBooks: Book[] = data.data.map((book) => ({
           id: book.id,
           title: book.title,
           author: book.author || 'Unknown Author',
-          image: book.coverImage || 'https://via.placeholder.com/300x450/1f2937/ffffff?text=Book+Cover',
-          color: getColorClass(index),
+          image: book.coverImage || 'https://via.placeholder.com/300x450/2E4A3D/ffffff?text=Book+Cover',
+          color: 'bg-[#F5EBDD]',
           price: book.price,
           category: book.category,
           description: book.description,
@@ -126,16 +123,6 @@ const BookSearchPage: React.FC = () => {
     fetchBooks(searchQuery, page);
   }, [searchQuery, page]);
 
-  const getColorClass = (index: number): string => {
-    const colors = [
-      'bg-teal-800', 'bg-stone-200', 'bg-teal-900', 
-      'bg-teal-900', 'bg-gray-900', 'bg-teal-800', 
-      'bg-green-700', 'bg-stone-200', 'bg-teal-800', 
-      'bg-teal-900', 'bg-stone-100', 'bg-gray-800'
-    ];
-    return colors[index % colors.length];
-  };
-
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
       setPage(newPage);
@@ -145,21 +132,21 @@ const BookSearchPage: React.FC = () => {
   return (
     <>
       <Navbar />
-      <div className="min-h-screen bg-white font-serif">
+      <div className="min-h-screen bg-[#FAF9F6] font-serif text-[#333333]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
           {/* Stats and Controls */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
-              <p className="text-gray-600">
+              <p className="text-[#333333]/70">
                 {loading ? 'Loading...' : `Found ${totalBooks} book${totalBooks !== 1 ? 's' : ''}`}
               </p>
             </div>
 
-            <div className="flex gap-0 border border-gray-300 rounded-lg overflow-hidden w-fit">
+            <div className="flex gap-0 border border-[#D4A373]/30 rounded-lg overflow-hidden w-fit shadow-sm">
               <button
                 onClick={() => setViewMode('grid')}
-                className={`flex items-center justify-center gap-2 px-4 py-2 transition-colors border-r border-gray-300 ${
-                  viewMode === 'grid' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700'
+                className={`flex items-center justify-center gap-2 px-4 py-2 transition-colors border-r border-[#D4A373]/30 ${
+                  viewMode === 'grid' ? 'bg-[#2E4A3D] text-white' : 'bg-white text-[#333333] hover:bg-[#A3B18A]/10'
                 }`}
               >
                 <Grid3x3 className="w-4 h-4" />
@@ -168,7 +155,7 @@ const BookSearchPage: React.FC = () => {
               <button
                 onClick={() => setViewMode('list')}
                 className={`flex items-center justify-center gap-2 px-4 py-2 transition-colors ${
-                  viewMode === 'list' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700'
+                  viewMode === 'list' ? 'bg-[#2E4A3D] text-white' : 'bg-white text-[#333333] hover:bg-[#A3B18A]/10'
                 }`}
               >
                 <AlignLeft className="w-4 h-4" />
@@ -182,7 +169,7 @@ const BookSearchPage: React.FC = () => {
               <p className="text-red-700">{error}</p>
               <button
                 onClick={() => fetchBooks(searchQuery, page)}
-                className="mt-2 text-sm text-red-600 hover:text-red-800 font-medium"
+                className="mt-2 text-sm text-[#B85C38] hover:underline font-medium"
               >
                 Try Again
               </button>
@@ -191,19 +178,35 @@ const BookSearchPage: React.FC = () => {
 
           {loading && (
             <div className="flex justify-center items-center py-12">
-              <div className="text-lg font-medium text-gray-600">Loading books...</div>
+              <div className="text-lg font-medium text-[#2E4A3D] animate-pulse">Loading scholarly works...</div>
             </div>
           )}
 
           {!loading && !error && (
             <>
               {books.length === 0 ? (
-                <div className="text-center py-12">
-                  <p className="text-gray-500 text-lg">
-                    {searchQuery 
-                      ? 'No books found matching your criteria. Try a different search.'
-                      : 'No books available. Check back soon!'}
-                  </p>
+                <div className="text-center py-16">
+                  <div className="max-w-md mx-auto">
+                    <div className="mb-8">
+                      <div className="bg-[#F5EBDD] rounded-full w-28 h-28 mx-auto flex items-center justify-center shadow-inner">
+                        <BookOpen className="w-14 h-14 text-[#D4A373]" />
+                      </div>
+                    </div>
+                    <h3 className="text-2xl font-bold text-[#2E4A3D] mb-3">
+                      No book found
+                    </h3>
+                    <p className="text-[#333333]/70 text-base leading-relaxed">
+                      {searchQuery ? (
+                        <>
+                          We couldn't find any books matching "<span className="font-semibold text-[#2E4A3D]">{searchQuery}</span>".
+                          <br />
+                          Try searching with a different title, author, or keyword.
+                        </>
+                      ) : (
+                        'Start exploring by searching for a book title or author above.'
+                      )}
+                    </p>
+                  </div>
                 </div>
               ) : viewMode === 'grid' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 mb-12">
@@ -214,21 +217,21 @@ const BookSearchPage: React.FC = () => {
                       className="group cursor-pointer"
                     >
                       <div
-                        className={`${book.color} rounded-xl p-6 flex items-center justify-center mb-3 aspect-[2/3] overflow-hidden`}
+                        className={`${book.color} rounded-xl p-6 flex items-center justify-center mb-3 aspect-[2/3] overflow-hidden border border-[#D4A373]/20 shadow-sm group-hover:shadow-md transition-shadow`}
                       >
                         <img
                           src={book.image}
                           alt={book.title}
                           className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                           onError={(e) => {
-                            e.currentTarget.src = "https://via.placeholder.com/300x450/1f2937/ffffff?text=Book+Cover";
+                            e.currentTarget.src = "https://via.placeholder.com/300x450/2E4A3D/ffffff?text=Book+Cover";
                           }}
                         />
                       </div>
-                      <h3 className="text-sm font-medium text-gray-900 mb-1 line-clamp-2">
+                      <h3 className="text-sm font-bold text-[#2E4A3D] mb-1 line-clamp-2 group-hover:text-[#B85C38] transition-colors">
                         {book.title}
                       </h3>
-                      <p className="text-xs text-gray-600">
+                      <p className="text-xs text-[#333333]/80">
                         by {book.author}
                       </p>
                     </Link>
@@ -240,46 +243,40 @@ const BookSearchPage: React.FC = () => {
                     <Link
                       key={book.id}
                       to={`/books/${book.id}`}
-                      className="flex gap-6 group cursor-pointer border-b border-gray-200 pb-6"
+                      className="flex gap-6 group cursor-pointer border-b border-[#F5EBDD] pb-6"
                     >
-                      <div className={`${book.color} rounded-xl p-4 flex items-center justify-center w-28 h-40 flex-shrink-0 overflow-hidden`}>
+                      <div className={`${book.color} rounded-xl p-4 flex items-center justify-center w-28 h-40 flex-shrink-0 overflow-hidden border border-[#D4A373]/10`}>
                         <img
                           src={book.image}
                           alt={book.title}
                           className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                           onError={(e) => {
-                            e.currentTarget.src = 'https://via.placeholder.com/150x225/1f2937/ffffff?text=Book';
+                            e.currentTarget.src = 'https://via.placeholder.com/150x225/2E4A3D/ffffff?text=Book';
                           }}
                         />
                       </div>
                       <div className="flex-1">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-1">{book.title}</h3>
-                        <p className="text-sm text-gray-600 mb-3">by {book.author}</p>
-                        <p className="text-sm text-gray-700 mb-3">
+                        <h3 className="text-lg font-bold text-[#2E4A3D] mb-1 group-hover:text-[#B85C38] transition-colors">{book.title}</h3>
+                        <p className="text-sm text-[#D4A373] font-medium mb-3">by {book.author}</p>
+                        <p className="text-sm text-[#333333] mb-3 line-clamp-2">
                           {book.description || 'A captivating mystery that will keep you guessing until the very end...'}
                         </p>
-                        <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+                        <div className="flex flex-wrap gap-2 text-xs">
                           {book.category && (
-                            <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded">
+                            <span className="flex items-center gap-1 px-2 py-1 bg-[#A3B18A]/20 text-[#2E4A3D] rounded">
                               <BookOpen className="w-3 h-3" />
                               {book.category}
                             </span>
                           )}
                           {book.publishedYear && (
-                            <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded">
+                            <span className="flex items-center gap-1 px-2 py-1 bg-[#F5EBDD] text-[#333333] rounded">
                               <Calendar className="w-3 h-3" />
                               {book.publishedYear}
                             </span>
                           )}
-                          {book.publisher && (
-                            <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded">
-                              <Building2 className="w-3 h-3" />
-                              {book.publisher}
-                            </span>
-                          )}
                         </div>
                         {book.price && (
-                          <p className="text-base font-semibold text-gray-900 mt-3">
+                          <p className="text-base font-bold text-[#B85C38] mt-3">
                             ${book.price.toFixed(2)}
                           </p>
                         )}
@@ -291,11 +288,11 @@ const BookSearchPage: React.FC = () => {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-2">
+                <div className="flex items-center justify-center gap-2 mt-8">
                   <button 
                     onClick={() => handlePageChange(page - 1)}
                     disabled={page === 1}
-                    className={`p-2 rounded transition-colors ${page === 1 ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-100 text-gray-700'}`}
+                    className={`p-2 rounded transition-colors ${page === 1 ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-[#A3B18A]/20 text-[#2E4A3D]'}`}
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
@@ -303,24 +300,19 @@ const BookSearchPage: React.FC = () => {
                   <div className="flex items-center gap-1">
                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                       let pageNum: number;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (page <= 3) {
-                        pageNum = i + 1;
-                      } else if (page >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = page - 2 + i;
-                      }
+                      if (totalPages <= 5) pageNum = i + 1;
+                      else if (page <= 3) pageNum = i + 1;
+                      else if (page >= totalPages - 2) pageNum = totalPages - 4 + i;
+                      else pageNum = page - 2 + i;
 
                       return (
                         <button
                           key={pageNum}
                           onClick={() => handlePageChange(pageNum)}
-                          className={`w-10 h-10 rounded flex items-center justify-center font-medium text-sm transition-colors ${
+                          className={`w-10 h-10 rounded flex items-center justify-center font-bold text-sm transition-colors ${
                             page === pageNum 
-                              ? 'bg-gray-900 text-white' 
-                              : 'hover:bg-gray-100 text-gray-700'
+                              ? 'bg-[#2E4A3D] text-white shadow-md' 
+                              : 'hover:bg-[#A3B18A]/20 text-[#2E4A3D]'
                           }`}
                         >
                           {pageNum}
@@ -332,7 +324,7 @@ const BookSearchPage: React.FC = () => {
                   <button 
                     onClick={() => handlePageChange(page + 1)}
                     disabled={page === totalPages}
-                    className={`p-2 rounded transition-colors ${page === totalPages ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-100 text-gray-700'}`}
+                    className={`p-2 rounded transition-colors ${page === totalPages ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-[#A3B18A]/20 text-[#2E4A3D]'}`}
                   >
                     <ChevronRight className="w-5 h-5" />
                   </button>

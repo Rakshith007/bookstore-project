@@ -1,4 +1,5 @@
-// prisma/schema.prisma – FINAL VERSION (Ready for Supabase PostgreSQL)
+// prisma/schema.prisma – UPDATED WITH EMAIL VERIFICATION
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,6 +17,7 @@ enum Role {
 
 enum OrderStatus {
   PROCESSING
+  PARTIALLY_PICKED
   PICKED
   PACKED
   SHIPPED
@@ -33,6 +35,13 @@ enum ShipmentStatus {
   PENDING
   WAITING
   SHIPPED
+  DELIVERED
+}
+
+// Updated: Removed SHIPPED since charity batches go directly to DELIVERED
+enum BatchFulfillmentStatus {
+  PICKED
+  PACKED
   DELIVERED
 }
 
@@ -55,15 +64,18 @@ model User {
   fullName       String
   email          String    @unique
   phoneNumber    String?
-  passwordHash   String?   // Keep optional for OAuth users
+  passwordHash   String?
   role           Role      @default(CUSTOMER)
-
-  // Flexible user profile (replaces MongoDB)
-  profile        Json?     @default("{}")  // bio, avatarUrl, preferences, theme, etc.
-
+  profile        Json?     @default("{}")
+  
+  // ✅ EMAIL VERIFICATION FIELDS ADDED HERE
+  emailVerified           Boolean?   @default(false)
+  verificationToken       String?
+  verificationTokenExpires DateTime?
+  verifiedAt              DateTime?
+  
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-
   addresses      Address[]
   paymentMethods PaymentMethod[]
   orders         Order[]
@@ -73,47 +85,51 @@ model User {
   notifications  Notification[]
   damageReports  DamageReport[] @relation("ReportedBy")
 
-  @@map("users") // Explicit table name mapping
+  @@map("users")
   @@index([email])
   @@index([role])
+  @@index([emailVerified])
+  @@index([verificationToken])
 }
 
 model Address {
-  id             Int      @id @default(autoincrement())
-  user           User     @relation(fields: [userId], references: [id])
-  userId         Int
-  type           String   @default("shipping")
-  streetAddress  String
-  apartment      String?
-  city           String
-  state          String?
-  country        String
-  isDefault      Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        Int
+  phone         String?
+  streetAddress String
+  apartment     String?
+  city          String
+  state         String?
+  country       String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@index([userId])
+  @@index([userId, isDefault])
 }
 
 model PaymentMethod {
-  id         Int      @id @default(autoincrement())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     Int
-  methodType String
-  lastFour   String?
-  expiryDate DateTime?
-  provider   String?
-  isPrimary  Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      Int
+  methodType  String
+  lastFour    String?
+  expiryDate  DateTime?
+  provider    String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  orders      Order[]
 
-  orders     Order[]
   @@index([userId])
 }
 
 model Author {
-  id    Int    @id @default(autoincrement())
-  name  String 
+  id    Int     @id @default(autoincrement())
+  name  String
   bio   String?
   books Book[]
+
   @@index([name])
 }
 
@@ -122,13 +138,15 @@ model Genre {
   name        String  @unique
   description String?
   books       Book[]
+
   @@index([name])
 }
 
 model Courier {
-  id        Int        @id @default(autoincrement())
-  name      String     @unique
-  shipments Shipment[]
+  id             Int                   @id @default(autoincrement())
+  name           String                @unique
+  shipments      Shipment[]
+  charityBatches OrderBatchFulfillment[]
 }
 
 model Book {
@@ -151,11 +169,9 @@ model Book {
   totalReviews      Int       @default(0)
   restockAlertLevel String?
   status            String    @default("available")
-  version           Int       @default(0)  // Optimistic concurrency
-
+  version           Int       @default(0)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
-
   orderItems        OrderItem[]
   reviews           Review[]
   wishlists         Wishlist[]
@@ -176,34 +192,33 @@ model Wishlist {
   book    Book @relation(fields: [bookId], references: [id])
   bookId  Int
   addedAt DateTime @default(now())
-  
+
   @@id([userId, bookId])
 }
 
 model CartItem {
-  id       Int      @id @default(autoincrement())
-  user     User?    @relation(fields: [userId], references: [id])
-  userId   Int?
-  book     Book     @relation(fields: [bookId], references: [id])
-  bookId   Int
-  quantity Int      @default(1)
-  addedAt  DateTime @default(now())
-  
+  id        Int      @id @default(autoincrement())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    Int?
+  book      Book     @relation(fields: [bookId], references: [id])
+  bookId    Int
+  quantity  Int      @default(1)
+  addedAt   DateTime @default(now())
+
   @@index([userId])
 }
 
 model Coupon {
-  id              Int         @id @default(autoincrement())
-  couponCode      String      @unique
-  discountType    DiscountType
-  discountValue   Decimal     @db.Decimal(10,2)
-  expirationDate  DateTime?
-  maxUsageLimit   Int?
-  usageCount      Int         @default(0)
-  status          String      @default("active")
-  createdAt       DateTime    @default(now())
-  
-  orders          Order[]
+  id             Int      @id @default(autoincrement())
+  couponCode     String   @unique
+  discountType   DiscountType
+  discountValue  Decimal  @db.Decimal(10,2)
+  expirationDate DateTime?
+  maxUsageLimit  Int?
+  usageCount     Int      @default(0)
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  orders         Order[]
 }
 
 model Order {
@@ -220,27 +235,21 @@ model Order {
   shippingCost            Decimal   @db.Decimal(12,2) @default(0)
   tax                     Decimal   @db.Decimal(12,2) @default(0)
   totalAmount             Decimal   @db.Decimal(12,2)
-
-  // Critical historical snapshots
-  shippingAddressSnapshot Json
   billingAddressSnapshot  Json?
-
   coupon                  Coupon?   @relation(fields: [couponId], references: [id])
   couponId                Int?
-
   orderedAt               DateTime?
   pickedAt                DateTime?
   packedAt                DateTime?
   shippedAt               DateTime?
   deliveredAt             DateTime?
-
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
-
   orderItems              OrderItem[]
   shipment                Shipment?
   notifications           Notification[]
   returns                 Return[]
+  fulfillments            OrderBatchFulfillment[]
 
   @@index([userId])
   @@index([orderDate(sort: Desc)])
@@ -248,36 +257,66 @@ model Order {
 }
 
 model OrderItem {
-  id        Int     @id @default(autoincrement())
-  order     Order   @relation(fields: [orderId], references: [id])
-  orderId   Int
-  book      Book    @relation(fields: [bookId], references: [id])
-  bookId    Int
+  id        Int      @id @default(autoincrement())
+
+  order     Order?  @relation(fields: [orderId], references: [id])
+  orderId   Int?
+
+  book      Book?   @relation(fields: [bookId], references: [id], onDelete: SetNull)
+  bookId    Int?
+
+  originalBookId Int?   // ✅ NEW
+
   quantity  Int
   unitPrice Decimal @db.Decimal(12,2)
   subtotal  Decimal @db.Decimal(12,2)
-  
+
   @@index([orderId])
   @@index([bookId])
 }
 
+model OrderBatchFulfillment {
+  id                 Int                     @id @default(autoincrement())
+  batchId            String
+  order              Order                   @relation(fields: [orderNumber], references: [orderNumber])
+  orderNumber        String
+  booksFulfilled     Int
+  status             BatchFulfillmentStatus  @default(PICKED)
+  pickedAt           DateTime?
+  packedAt           DateTime?
+  shippedAt          DateTime?               // Optional: kept for backward compatibility
+  deliveredAt        DateTime?               // ← NEW: Tracks when marked as Delivered
+  charityAddress     Json?
+  internalTrackingId String?
+  courier            Courier?                @relation(fields: [courierId], references: [id])
+  courierId          Int?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  @@unique([batchId, orderNumber])
+  @@index([orderNumber])
+  @@index([batchId])
+  @@index([status])
+  @@index([courierId])
+}
+
 model Shipment {
-  id                 Int            @id @default(autoincrement())
-  order              Order          @relation(fields: [orderId], references: [id])
-  orderId            Int            @unique
-  trackingNumber     String?        @unique
-  courier            Courier?       @relation(fields: [courierId], references: [id])
+  id                 Int         @id @default(autoincrement())
+  order              Order       @relation(fields: [orderId], references: [id])
+  orderId            Int         @unique
+  trackingNumber     String?     @unique
+  courier            Courier?    @relation(fields: [courierId], references: [id])
   courierId          Int?
   shippingMethod     String?
   assignedPickupTime DateTime?
   packageType        String?
   protectiveMaterial String?
-  weightKg           Decimal?       @db.Decimal(8,2)
+  weightKg           Decimal?    @db.Decimal(8,2)
   dimensionsCm       String?
   status             ShipmentStatus @default(PENDING)
   shippedAt          DateTime?
   deliveredAt        DateTime?
-  createdAt          DateTime       @default(now())
+  createdAt          DateTime    @default(now())
 }
 
 model Review {
@@ -295,17 +334,17 @@ model Review {
 }
 
 model Notification {
-  id             Int      @id @default(autoincrement())
-  user           User     @relation(fields: [userId], references: [id])
-  userId         Int
-  type           String
-  title          String?
-  message        String
-  relatedOrder   Order?   @relation(fields: [relatedOrderId], references: [id])
-  relatedOrderId Int?
-  isRead         Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  readAt         DateTime?
+  id              Int       @id @default(autoincrement())
+  user            User      @relation(fields: [userId], references: [id])
+  userId          Int
+  type            String
+  title           String?
+  message         String
+  relatedOrder    Order?    @relation(fields: [relatedOrderId], references: [id])
+  relatedOrderId  Int?
+  isRead          Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  readAt          DateTime?
 
   @@index([userId])
   @@index([isRead])
@@ -313,27 +352,44 @@ model Notification {
 }
 
 model DamageReport {
-  id          Int      @id @default(autoincrement())
-  book        Book?    @relation(fields: [bookId], references: [id])
-  bookId      Int?
-  sku         String?
-  description String
-  reportedBy  User?    @relation("ReportedBy", fields: [reportedById], references: [id])
+  id           Int      @id @default(autoincrement())
+  book         Book?    @relation(fields: [bookId], references: [id])
+  bookId       Int?
+  sku          String?
+  description  String
+  reportedBy   User?    @relation("ReportedBy", fields: [reportedById], references: [id])
   reportedById Int?
-  reportedAt  DateTime @default(now())
-  
+  reportedAt   DateTime @default(now())
+
   @@index([bookId])
   @@index([reportedById])
 }
 
 model Return {
-  id          Int          @id @default(autoincrement())
-  order       Order        @relation(fields: [orderId], references: [id])
+  id          Int         @id @default(autoincrement())
+  order       Order       @relation(fields: [orderId], references: [id])
   orderId     Int
   reason      String?
   status      ReturnStatus @default(PENDING)
-  requestedAt DateTime     @default(now())
+  requestedAt DateTime    @default(now())
   processedAt DateTime?
 
   @@index([orderId])
+}
+
+model ArchivedBook {
+  id             Int      @id @default(autoincrement())
+  originalId     Int      // This stores the old Book.id
+  title          String
+  author         String?
+  genre          String?
+  price          Decimal
+  sku            String
+  barcode        String?
+  coverImageUrl  String?
+  description    String?
+  metadata       Json?
+  archivedAt     DateTime @default(now())
+
+  @@index([originalId])
 }

@@ -1,217 +1,227 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import Navbar from "../../components/layout/Navbar";
-// Optional (only if you want footer consistency)
-// import Footer from "../../components/layout/Footer";
+import { isLoggedIn, getToken } from "../../lib/auth";
 
-type PaymentMethodType = "card" | "upi" | "wallet";
-
-interface Book {
-  id: string;
+interface CartItem {
+  id: number;
   title: string;
   author: string;
-  price: number;
   image: string;
+  price: number;
+  quantity: number;
 }
 
-const PaymentMethodPage: React.FC = () => {
-  const [paymentMethod, setPaymentMethod] =
-    useState<PaymentMethodType>("card");
+const PaymentPage: React.FC = () => {
+  const navigate = useNavigate();
 
-  const [formData, setFormData] = useState({
-    nameOnCard: "",
-    cardNumber: "",
-    expiryDate: "",
-    cvv: "",
-  });
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [placingOrder, setPlacingOrder] = useState(false);
 
-  const books: Book[] = [
-    {
-      id: "1",
-      title: "The Secret Garden",
-      author: "Amelia Hayes",
-      price: 12.99,
-      image:
-        "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=80&h=120&fit=crop",
-    },
-    {
-      id: "2",
-      title: "Echoes of the Past",
-      author: "Ethan Carter",
-      price: 9.99,
-      image:
-        "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=80&h=120&fit=crop",
-    },
-  ];
+  const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:4000";
 
-  const subtotal = books.reduce((sum, book) => sum + book.price, 0);
-  const shipping = 4.99;
-  const tax = 1.84;
+  // Check login + fetch cart only
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!isLoggedIn()) {
+        navigate("/login", { state: { from: "/payment" } });
+        return;
+      }
+
+      const token = getToken();
+
+      try {
+        // Fetch cart only (no addresses needed anymore)
+        const cartRes = await fetch(`${API_BASE_URL}/cart`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (cartRes.ok) {
+          const cartData = await cartRes.json();
+          if (cartData.success && cartData.data) {
+            const items = cartData.data.map((item: any) => ({
+              id: item.book.id,
+              title: item.book.title,
+              author: item.book.author?.name || "Unknown",
+              image: item.book.coverImageUrl || "",
+              price: Number(item.book.price),
+              quantity: item.quantity,
+            }));
+            setCartItems(items);
+          }
+        } else {
+          throw new Error("Failed to load cart");
+        }
+      } catch (err) {
+        console.error("Failed to load cart:", err);
+        alert("Failed to load your cart. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [navigate]);
+
+  const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const shipping = 0;
+  const tax = 0;
   const total = subtotal + shipping + tax;
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  const handlePlaceOrder = async () => {
+    setPlacingOrder(true);
+    const token = getToken();
+
+    try {
+      const orderPayload = {
+        paymentMethod: "ONLINE", // Only online payment
+        // No shippingAddressId anymore
+      };
+
+      const response = await fetch(`${API_BASE_URL}/payment/order`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(orderPayload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to place order");
+      }
+
+      const result = await response.json();
+
+      navigate("/ordersuccess", {
+        replace: true,
+        state: {
+          orderNumber: result.data.orderNumber,
+          totalAmount: result.data.totalAmount,
+          paymentMethod: "Online Payment",
+        },
+      });
+    } catch (err: any) {
+      console.error("Order placement error:", err);
+      alert(err.message || "Failed to place order. Please try again.");
+    } finally {
+      setPlacingOrder(false);
+    }
   };
 
-  return (
-    <div className="min-h-screen bg-white">
-      {/* ✅ Shared Navbar */}
-      <Navbar />
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-xl">Loading payment details...</p>
+      </div>
+    );
+  }
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Breadcrumb */}
-        <div className="mb-6">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <span>Shopping Bag</span>
-            <span>/</span>
-            <span className="text-gray-900">Payment</span>
+  if (cartItems.length === 0) {
+    return (
+      <>
+        <Navbar />
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-2xl mb-4">Your cart is empty</p>
+            <button
+              onClick={() => navigate("/")}
+              className="px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+            >
+              Continue Shopping
+            </button>
           </div>
         </div>
+      </>
+    );
+  }
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* LEFT SECTION */}
-          <div className="lg:col-span-2">
-            <h1 className="text-3xl font-semibold mb-6">
-              Payment Method
-            </h1>
+  return (
+    <>
+      <Navbar />
+      <div className="min-h-screen bg-gray-50">
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <h1 className="text-3xl font-bold mb-8">Payment</h1>
 
-            {/* Payment Options */}
-            <div className="space-y-4 mb-6">
-              {[
-                { key: "card", label: "Credit/Debit Card" },
-                { key: "upi", label: "UPI" },
-                { key: "wallet", label: "Cash on Delivery" },
-              ].map((method) => (
-                <button
-                  key={method.key}
-                  onClick={() =>
-                    setPaymentMethod(
-                      method.key as PaymentMethodType
-                    )
-                  }
-                  className={`w-full flex items-center gap-3 p-4 border rounded-lg ${
-                    paymentMethod === method.key
-                      ? "border-gray-900"
-                      : "border-gray-300"
-                  }`}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                      paymentMethod === method.key
-                        ? "border-gray-900"
-                        : "border-gray-300"
-                    }`}
-                  >
-                    {paymentMethod === method.key && (
-                      <div className="w-2.5 h-2.5 rounded-full bg-gray-900" />
-                    )}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* LEFT - Payment Info */}
+            <div className="lg:col-span-2 space-y-8">
+              {/* Payment Method - Only Online */}
+              <div>
+                <h2 className="text-xl font-semibold mb-4">Payment Method</h2>
+                <div className="bg-white p-5 border rounded-lg">
+                  <div className="flex items-center gap-4">
+                    <div className="w-6 h-6 rounded-full border-2 border-gray-900 flex items-center justify-center">
+                      <div className="w-4 h-4 bg-gray-900 rounded-full" />
+                    </div>
+                    <span className="text-lg font-medium">Online Payment</span>
                   </div>
-                  <span>{method.label}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Card Form */}
-            {paymentMethod === "card" && (
-              <div className="space-y-4">
-                <input
-                  name="nameOnCard"
-                  placeholder="Name on Card"
-                  value={formData.nameOnCard}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border rounded-lg"
-                />
-                <input
-                  name="cardNumber"
-                  placeholder="Card Number"
-                  value={formData.cardNumber}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border rounded-lg"
-                />
-                <div className="grid grid-cols-2 gap-4">
-                  <input
-                    name="expiryDate"
-                    placeholder="MM/YY"
-                    value={formData.expiryDate}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 border rounded-lg"
-                  />
-                  <input
-                    name="cvv"
-                    placeholder="CVV"
-                    value={formData.cvv}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-3 border rounded-lg"
-                  />
                 </div>
               </div>
-            )}
 
-            <div className="mt-8 flex justify-end">
-              <Link to="/ordersuccess">
-                <button className="px-8 py-3 bg-[#2D4A3E] text-white rounded-full">
-                  Pay Now
+              {/* Place Order Button */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handlePlaceOrder}
+                  disabled={placingOrder}
+                  className="px-10 py-4 bg-gray-900 text-white text-lg font-medium rounded-lg hover:bg-gray-800 disabled:opacity-70 disabled:cursor-not-allowed transition"
+                >
+                  {placingOrder ? "Processing Payment..." : "Pay Now"}
                 </button>
-              </Link>
+              </div>
             </div>
-          </div>
 
-          {/* RIGHT SECTION */}
-          <div>
-            <div className="border rounded-lg p-6">
-              <h2 className="text-2xl font-semibold mb-6">
-                Order Summary
-              </h2>
+            {/* RIGHT - Order Summary */}
+            <div>
+              <div className="bg-white p-6 rounded-lg border shadow-sm">
+                <h2 className="text-2xl font-bold mb-6">Order Summary</h2>
 
-              {books.map((book) => (
-                <div key={book.id} className="flex gap-4 mb-4">
-                  <img
-                    src={book.image}
-                    alt={book.title}
-                    className="w-16 h-24 object-cover rounded"
-                  />
-                  <div className="flex-1">
-                    <h3>{book.title}</h3>
-                    <p className="text-sm text-gray-600">
-                      by {book.author}
+                {cartItems.map((item) => (
+                  <div key={item.id} className="flex gap-4 mb-6 pb-6 border-b last:border-0">
+                    <img
+                      src={item.image || "https://via.placeholder.com/80x120"}
+                      alt={item.title}
+                      className="w-16 h-24 object-cover rounded"
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-gray-600">by {item.author}</p>
+                      <p className="text-sm mt-1">Qty: {item.quantity}</p>
+                    </div>
+                    <p className="font-medium">
+                      ${(item.price * item.quantity).toFixed(2)}
                     </p>
                   </div>
-                  <span>${book.price.toFixed(2)}</span>
-                </div>
-              ))}
+                ))}
 
-              <div className="border-t pt-4 space-y-2">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
+                {/*<div className="border-t pt-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>${subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Shipping</span>
+                    <span>Free</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Tax</span>
+                    <span>$0.00</span>
+                  </div>
+                </div>*/}
+
+                <div className="border-t mt-4 pt-4 flex justify-between text-xl font-bold">
+                  <span>Total</span>
                   <span>${subtotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Shipping</span>
-                  <span>${shipping.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Tax</span>
-                  <span>${tax.toFixed(2)}</span>
-                </div>
-              </div>
-
-              <div className="border-t pt-4 flex justify-between font-semibold">
-                <span>Total</span>
-                <span>${total.toFixed(2)}</span>
               </div>
             </div>
           </div>
-        </div>
-      </main>
-
-      {/* Optional */}
-      {/* <Footer /> */}
-    </div>
+        </main>
+      </div>
+    </>
   );
 };
 
-export default PaymentMethodPage;
+export default PaymentPage;
