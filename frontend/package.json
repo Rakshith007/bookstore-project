@@ -13,6 +13,7 @@
     "framer-motion": "^12.23.26",
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.560.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.1",
     "react-confetti": "^6.4.0",
     "react-dom": "^19.2.1",

@@ -59,6 +59,7 @@ import CartEmptyContent from "./app/carts/CartEmptyContent";
 import AdminLoginPage from "./app/admin/AdminLoginPage";
 import ProtectedAdminRoute from './components/auth/ProtectedAdminRoute';
 import VerifyEmailPage from "./app/auth/VerifyEmail";
+import VerifyDeliveryPage from "./app/admin/VerifyDeliveryPage";
 
 
 // Page Not Found Component (unchanged)
@@ -105,6 +106,7 @@ const App: React.FC = () => {
         <Route path="/verify-email" element={<VerifyEmailPage />} /> {/* NEW ROUTE */}
         <Route path="/terms" element={<TermsPage />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/verify-delivery/:batchId" element={<VerifyDeliveryPage />} />
         
         {/* Book Routes */}
         <Route path="/search" element={<BookSearchPage />} />

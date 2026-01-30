@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Menu, Printer, Download, Package, 
-  ArrowLeft, Building2, Plus, Edit2, Trash2, Loader2, Scissors, AlertCircle, MapPin, Phone, CheckCircle
+  ArrowLeft, Building2, Plus, Edit2, Trash2, Loader2, Scissors, 
+  AlertCircle, MapPin, Phone, CheckCircle, QrCode, Copy, Shield
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Sidebar, MobileSidebarDrawer } from '../../components/layout/AdminSidebar';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface BatchItem {
   title: string;
@@ -43,6 +45,12 @@ const GenerateLabelPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // QR Code & Security Code States
+  const [securityCode, setSecurityCode] = useState<string>('');
+  const [qrData, setQrData] = useState<string>('');
+  const [verificationUrl, setVerificationUrl] = useState<string>('');
+  const [generated, setGenerated] = useState(false);
 
   const [formData, setFormData] = useState({
     instituteName: '',
@@ -155,16 +163,70 @@ const GenerateLabelPage: React.FC = () => {
       });
     });
 
-    setBatch({
+    const newBatch = {
       batchId: incomingBatchId,
       totalBooks,
       items: flatItems
-    });
+    };
+    
+    setBatch(newBatch);
+    
+    // Generate QR code automatically
+    if (selectedAddress && newBatch) {
+      generateQRCodeAutomatically(newBatch, selectedAddress);
+    }
   }, [location.state, navigate]);
 
   useEffect(() => {
     fetchAddresses();
   }, []);
+
+  // Generate QR code when address changes
+  useEffect(() => {
+    if (batch && selectedAddress && !generated) {
+      generateQRCodeAutomatically(batch, selectedAddress);
+    }
+  }, [selectedAddress, batch]);
+
+  const generateQRCodeAutomatically = (batchData: BatchDetails, address: CharityAddress) => {
+    // Generate a 6-digit random code if not already generated
+    if (!securityCode) {
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      setSecurityCode(code);
+    }
+    
+    // Calculate expiry date (2 months from now)
+    const calculateExpiryDate = () => {
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + 2);
+      return expiryDate.toISOString();
+    };
+    
+    const expiryDate = calculateExpiryDate();
+    
+    // Create verification URL with ALL actual data as query parameters
+    const baseUrl = window.location.origin;
+    const verificationPageUrl = `${baseUrl}/verify-delivery/${batchData.batchId}?` +
+      `code=${securityCode}&` +
+      `institute=${encodeURIComponent(address.instituteName)}&` +
+      `address=${encodeURIComponent(address.displayStreetAddress)}&` +
+      `city=${encodeURIComponent(address.city)}&` +
+      `state=${encodeURIComponent(address.state || '')}&` +
+      `country=${encodeURIComponent(address.country)}&` +
+      `phone=${encodeURIComponent(address.phone || '')}&` +
+      `totalBooks=${batchData.totalBooks}&` +
+      `expiry=${encodeURIComponent(expiryDate)}&` +
+      `items=${encodeURIComponent(JSON.stringify(batchData.items))}`;
+    
+    setVerificationUrl(verificationPageUrl);
+    
+    // Store the QR data (just the URL)
+    setQrData(verificationPageUrl);
+    setGenerated(true);
+    
+    console.log('QR Code generated. Verification URL:', verificationPageUrl);
+    console.log('Security Code:', securityCode);
+  };
 
   const resetForm = () => {
     setFormData({
@@ -296,6 +358,46 @@ const GenerateLabelPage: React.FC = () => {
 
   const handlePrint = () => window.print();
 
+  // Generate WhatsApp Message for Security Code
+  const generateSecurityCodeWhatsAppMessage = (code: string) => {
+    if (!selectedAddress || !batch) return '';
+    
+    const expiryDate = new Date();
+    expiryDate.setMonth(expiryDate.getMonth() + 2);
+    const formattedExpiryDate = expiryDate.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+    
+    return `*DELIVERY VERIFICATION CODE*\n\n` +
+      `*Institute:* ${selectedAddress.instituteName}\n` +
+      `*Batch ID:* ${batch.batchId}\n` +
+      `*Delivery Date:* ${new Date().toLocaleDateString('en-GB')}\n\n` +
+      `*SECURITY CODE:* ${code}\n\n` +
+      `*Instructions:*\n` +
+      `1. Scan the QR code on the parcel\n` +
+      `2. The verification page will open\n` +
+      `3. Enter the security code above\n` +
+      `4. Click "Verify Delivery"\n\n` +
+      `*This code is valid until:* ${formattedExpiryDate}\n` +
+      `(2 months from today)`;
+  };
+
+  // Open WhatsApp with Security Code message
+  const openWhatsAppWithSecurityCode = () => {
+    if (!selectedAddress?.phone || !securityCode) {
+      alert('Phone number or security code not available');
+      return;
+    }
+    
+    const message = generateSecurityCodeWhatsAppMessage(securityCode);
+    const encodedMessage = encodeURIComponent(message);
+    const whatsappUrl = `https://wa.me/${selectedAddress.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+    
+    window.open(whatsappUrl, '_blank');
+  };
+
   const handleMarkAsShipped = async () => {
     if (!batch || !selectedAddress || isSubmitting) return;
 
@@ -316,12 +418,16 @@ const GenerateLabelPage: React.FC = () => {
         },
         body: JSON.stringify({
           batchId: batch.batchId,
-          internalTrackingId: null, // No tracking ID anymore
+          internalTrackingId: null,
           charityAddress: {
             ...selectedAddress,
             name: selectedAddress.instituteName,
             streetAddress: selectedAddress.streetAddress
           },
+          securityCode: securityCode,
+          qrData: qrData,
+          verificationUrl: verificationUrl,
+          expiryDate: new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
         }),
       });
 
@@ -330,7 +436,7 @@ const GenerateLabelPage: React.FC = () => {
         throw new Error(err.message || 'Failed to save packing slip');
       }
 
-      alert('Packing slip saved and batch marked as packed!');
+      alert('Packing slip saved and batch marked as packed! QR code and security code have been generated automatically.');
 
       navigate('/admin/shippingqueue', {
         state: {
@@ -339,6 +445,9 @@ const GenerateLabelPage: React.FC = () => {
             charityName: selectedAddress.instituteName,
             totalBooks: batch.totalBooks,
             address: selectedAddress,
+            securityCode: securityCode,
+            qrData: qrData,
+            verificationUrl: verificationUrl
           }
         }
       });
@@ -380,6 +489,15 @@ const GenerateLabelPage: React.FC = () => {
       message += `☐     ${item.location.padEnd(7)} ${item.isbn.padEnd(10)} ${item.title.padEnd(28)} ${item.quantity.toString().padEnd(5)} OMR ${item.price.toFixed(3)}\n`;
     });
 
+    // Add QR Code information
+    if (verificationUrl) {
+      message += `\n*SECURITY VERIFICATION*\n` +
+        `*QR Code:* Embedded on packing slip\n` +
+        `*Scan to verify:* Opens verification page\n` +
+        `*Security Code:* Sent separately via WhatsApp\n` +
+        `*Valid For:* 2 months from today\n`;
+    }
+
     message += `\n*Packed By:* _________________\n` +
       `*Total Items:* ${batch.totalBooks}\n\n` +
       `*Important:* This is a charity donation. Please assign actual courier and tracking in Shipping Queue.`;
@@ -387,7 +505,7 @@ const GenerateLabelPage: React.FC = () => {
     const encoded = encodeURIComponent(message);
     const isMobile = /Mobi|Android/i.test(navigator.userAgent);
 
-    if (isMobile) {
+    if (!isMobile) {
       window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
     } else {
       navigator.clipboard.writeText(message);
@@ -410,6 +528,8 @@ const GenerateLabelPage: React.FC = () => {
 
   const totalValue = batch.items.reduce((s, i) => s + i.price * i.quantity, 0);
   const today = new Date().toLocaleDateString('en-GB');
+  const expiryDate = new Date();
+  expiryDate.setMonth(expiryDate.getMonth() + 2);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -444,6 +564,13 @@ const GenerateLabelPage: React.FC = () => {
             <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-blue-600">
               <ArrowLeft size={20} /> Back
             </button>
+            {/* QR Code Status Badge */}
+            {securityCode && (
+              <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-full">
+                <Shield size={16} />
+                <span className="text-sm font-medium">QR Code Generated</span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -624,7 +751,7 @@ const GenerateLabelPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Selected Address Preview */}
+                {/* Selected Address Preview - RESTORED FULL UI */}
                 {selectedAddress && !showForm && (
                   <div className="mt-8 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-300 shadow-lg">
                     <div className="flex items-center gap-3 mb-4">
@@ -651,6 +778,41 @@ const GenerateLabelPage: React.FC = () => {
                         </div>
                       )}
                     </div>
+                    
+                    {/* Security Code Section - RESTORED WITH COPY BUTTON */}
+                    {securityCode && (
+                      <div className="mt-6 pt-4 border-t border-blue-200">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Shield size={18} className="text-blue-600" />
+                            <h4 className="font-bold text-blue-900">Security Code Generated</h4>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(securityCode);
+                              alert('Security code copied to clipboard!');
+                            }}
+                            className="flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm"
+                          >
+                            <Copy size={14} /> Copy
+                          </button>
+                        </div>
+                        <div className="bg-white rounded-lg p-4 border border-blue-200">
+                          <div className="text-center">
+                            <p className="text-sm text-gray-600 mb-2">Send this code to institution via WhatsApp</p>
+                            <p className="font-mono font-bold text-3xl text-blue-800 tracking-wider">
+                              {securityCode}
+                            </p>
+                            <div className="mt-3 space-y-2 text-sm text-gray-600">
+                              <p>• QR code automatically embedded in packing slip</p>
+                              <p>• When scanned, opens verification page with order details</p>
+                              <p>• Institution enters this code to verify delivery</p>
+                              <p>• Valid for 2 months from today</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -661,7 +823,12 @@ const GenerateLabelPage: React.FC = () => {
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="bg-gray-100 px-4 py-2 border-b flex justify-between items-center no-print">
                   <h3 className="text-sm font-bold text-gray-700">Print Preview</h3>
-                  {selectedAddress && <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">Ready</span>}
+                  {selectedAddress && securityCode && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">Ready</span>
+                      <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-medium">QR Embedded</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-4 bg-gray-200 flex justify-center">
@@ -698,6 +865,35 @@ const GenerateLabelPage: React.FC = () => {
                                   <span>OMR {item.price.toFixed(3)}</span>
                                 </div>
                               ))}
+                            </div>
+                          </div>
+                          
+                          {/* QR Code Section - Bigger with URL */}
+                          <div className="pt-4">
+                            <div className="text-center">
+                              <p className="text-[10px] font-bold uppercase mb-3">Delivery Verification QR Code</p>
+                              <div className="flex justify-center mb-2">
+                                <div className="w-36 h-36 border-2 border-gray-400 p-2 bg-white">
+                                  {qrData ? (
+                                    <QRCodeSVG 
+                                      value={qrData}
+                                      size={144}
+                                      level="H"
+                                      includeMargin={true}
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                                      <span className="text-[8px] text-center">Generating QR Code...</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="text-[8px] text-gray-600 mt-2">
+                                Scan to open verification page with order details
+                              </p>
+                              <p className="text-[8px] text-gray-500">
+                                Valid for 2 months • Security code required
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -748,6 +944,11 @@ const GenerateLabelPage: React.FC = () => {
                             </div>
                             <div className="text-right">
                               <p className="font-bold">Total Items: {batch.totalBooks}</p>
+                              {qrData && (
+                                <p className="text-[8px] text-gray-600 mt-2">
+                                  Scan QR code to verify delivery
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -774,6 +975,19 @@ const GenerateLabelPage: React.FC = () => {
                       </button>
                     </div>
 
+                    {/* Only show Send Security Code button if phone exists */}
+                    {selectedAddress.phone && securityCode && (
+                      <button
+                        onClick={openWhatsAppWithSecurityCode}
+                        className="w-full py-3 bg-[#25D366] text-white font-medium rounded-lg hover:bg-[#128C7E] flex items-center justify-center gap-2"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088"/>
+                        </svg>
+                        Send Security Code via WhatsApp
+                      </button>
+                    )}
+
                     <button 
                       onClick={handleMarkAsShipped}
                       disabled={isSubmitting}
@@ -790,13 +1004,47 @@ const GenerateLabelPage: React.FC = () => {
 
                     <button
                       onClick={handleShareToWarehouse}
-                      className="w-full py-3 bg-[#25D366] text-white font-medium rounded-lg hover:bg-[#128C7E] flex items-center justify-center gap-2"
+                      className="w-full py-3 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 flex items-center justify-center gap-2"
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088"/>
                       </svg>
                       Share to Warehouse
                     </button>
+
+                    {/* Security Code Display - Big and Clear */}
+                    {securityCode && (
+                      <div className="bg-purple-50 rounded-lg p-5 border border-purple-200">
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-2 mb-3">
+                            <Shield size={20} className="text-purple-600" />
+                            <span className="font-bold text-purple-900 text-lg">Security Code</span>
+                          </div>
+                          <div className="bg-white rounded-lg p-4 border border-purple-300 mb-3">
+                            <p className="text-sm text-purple-700 mb-2">Send to institution via WhatsApp:</p>
+                            <p className="font-mono font-bold text-4xl text-purple-800 tracking-wider">
+                              {securityCode}
+                            </p>
+                            <div className="mt-4 space-y-2 text-left text-sm text-purple-700">
+                              <p>• QR code opens verification website with actual order details</p>
+                              <p>• Shows institute information, items, and batch details</p>
+                              <p>• Requires this security code entry to verify</p>
+                              <p>• Valid for 2 months from today</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(securityCode);
+                              alert('Security code copied to clipboard!');
+                            }}
+                            className="w-full py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 flex items-center justify-center gap-2"
+                          >
+                            <Copy size={16} />
+                            Copy Security Code
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="py-8 text-center text-gray-500">
