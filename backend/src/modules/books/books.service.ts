@@ -27,6 +27,28 @@ export class BooksService {
     this.supabase = createClient(supabaseUrl, supabaseKey);
   }
 
+  async getSecurityCodeOnly(batchId: string) {
+    const packingSlip = await this.prisma.prisma.packingSlip.findUnique({
+      where: { batchId },
+      select: {
+        securityCode: true,
+        expiryDate: true,
+        batchId: true,
+      },
+    });
+
+    if (!packingSlip) {
+      return {
+        success: false,
+        message: 'Packing slip not found for this batchId',
+      };
+    }
+
+    return {
+      success: true,
+      data: packingSlip,
+    };
+  }
   async createBook(dto: any, coverImage?: Express.Multer.File) {
     this.logger.log(`Creating book: ${dto.title}`);
     let coverImageUrl: string | undefined;
@@ -36,9 +58,9 @@ export class BooksService {
       try {
         const fileExtension = coverImage.originalname.split('.').pop();
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExtension}`;
-        
+
         this.logger.log(`Uploading image: ${fileName}`);
-        
+
         const { data, error } = await this.supabase.storage
           .from('book-covers')
           .upload(fileName, coverImage.buffer, {
@@ -150,7 +172,7 @@ export class BooksService {
 
     this.logger.log(`Book SKU updated to: ${finalSku}`);
     this.logger.log(`Book created successfully: ${dto.title}`);
-    
+
     return {
       ...updatedBook,
       message: 'Book created successfully',
@@ -158,24 +180,84 @@ export class BooksService {
     };
   }
 
+  async verifyDelivery(batchId: string) {
+    try {
+      // First find the order by batchId to get its id
+      const order = await this.prisma.client.orderBatchFulfillment.findFirst({
+        where: {
+          batchId: batchId
+        }
+      });
+
+      const verify = await this.prisma.client.packingSlip.findUnique({
+        where: {
+          batchId: batchId
+        }
+      })
+
+      if (!verify) {
+        throw new NotFoundException(`Packing slip for batch ID ${batchId} not found`);
+      }
+
+       if (verify.isCodeUsed) {
+      throw new BadRequestException('Security code has already been used');
+    }
+
+      if (!order) {
+        throw new NotFoundException(`Order with batch ID ${batchId} not found`);
+      }
+
+      // Now update using the actual id
+      const updatedOrder = await this.prisma.client.orderBatchFulfillment.update({
+        where: {
+          id: order.id  // Use the primary key (id)
+        },
+        data: {
+          status: 'DELIVERED',
+          deliveredAt: new Date()
+        }
+      });
+
+      const updateStatus = await this.prisma.client.packingSlip.update({
+        where: {
+          batchId: batchId
+        },
+        data: {
+          isCodeUsed: true
+        }
+      })
+
+      return {
+        success: true,
+        message: 'Order marked as delivered successfully',
+        data: { ...updatedOrder, ...updateStatus }
+      };
+    } catch (error) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException(`Order with batch ID ${batchId} not found`);
+      }
+      throw error;
+    }
+  }
+
   async findAll(filters?: BookFilterDto) {
-    const { 
-      category, 
-      author, 
-      status, 
-      search, 
-      page = 1, 
-      limit = 20 
+    const {
+      category,
+      author,
+      status,
+      search,
+      page = 1,
+      limit = 20
     } = filters || {};
-    
+
     const pageNumber = Number(page) || 1;
     const limitNumber = Number(limit) || 20;
     const safeLimit = Math.min(limitNumber, 1000);
 
     const skip = (pageNumber - 1) * safeLimit;
-    
+
     const where: any = {};
-    
+
     if (category) {
       where.genre = {
         name: {
@@ -184,7 +266,7 @@ export class BooksService {
         },
       };
     }
-    
+
     if (author) {
       where.author = {
         name: {
@@ -193,11 +275,11 @@ export class BooksService {
         },
       };
     }
-    
+
     if (status) {
       where.status = status;
     }
-    
+
     if (search) {
       where.OR = [
         { title: { contains: search, mode: 'insensitive' } },
@@ -206,7 +288,7 @@ export class BooksService {
         { genre: { name: { contains: search, mode: 'insensitive' } } },
       ];
     }
-    
+
     const [books, total] = await Promise.all([
       this.prisma.client.book.findMany({
         where,
@@ -220,12 +302,12 @@ export class BooksService {
       }),
       this.prisma.client.book.count({ where }),
     ]);
-    
+
     const transformedBooks = books.map(book => {
       const metadata = book.metadata as any;
       const mrp = metadata?.mrp;
       const priceNumber = Number(book.price);
-      
+
       return {
         id: book.id,
         title: book.title,
@@ -250,7 +332,7 @@ export class BooksService {
         updatedAt: book.updatedAt,
       };
     });
-    
+
     return {
       success: true,
       data: transformedBooks,
@@ -269,15 +351,15 @@ export class BooksService {
         genre: true,
       },
     });
-    
+
     if (!book) {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
-    
+
     const metadata = book.metadata as any;
     const mrp = metadata?.mrp;
     const priceNumber = Number(book.price);
-    
+
     return {
       success: true,
       data: {
@@ -311,31 +393,31 @@ export class BooksService {
       where: { id },
       include: { author: true, genre: true },
     });
-    
+
     if (!existingBook) {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
-    
+
     let coverImageUrl = existingBook.coverImageUrl;
-    
+
     if (coverImage) {
       try {
         const fileExtension = coverImage.originalname.split('.').pop();
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExtension}`;
-        
+
         const { data, error } = await this.supabase.storage
           .from('book-covers')
           .upload(fileName, coverImage.buffer, {
             contentType: coverImage.mimetype,
             upsert: false,
           });
-        
+
         if (error) {
           throw new BadRequestException('Image upload failed: ' + error.message);
         }
-        
+
         coverImageUrl = `${this.config.get('SUPABASE_URL')}/storage/v1/object/public/book-covers/${data.path}`;
-        
+
         if (existingBook.coverImageUrl) {
           const oldFileName = existingBook.coverImageUrl.split('/').pop();
           await this.supabase.storage
@@ -346,14 +428,14 @@ export class BooksService {
         throw new BadRequestException('Failed to upload image');
       }
     }
-    
+
     let author: { id: number } | null = null;
     if (dto.author && dto.author.trim()) {
       author = await this.prisma.client.author.findFirst({
         where: { name: dto.author.trim() },
         select: { id: true },
       });
-      
+
       if (!author) {
         const newAuthor = await this.prisma.client.author.create({
           data: { name: dto.author.trim() },
@@ -362,7 +444,7 @@ export class BooksService {
         author = newAuthor;
       }
     }
-    
+
     let genre: { id: number } | null = null;
     if (dto.category && dto.category.trim()) {
       genre = await this.prisma.client.genre.upsert({
@@ -372,7 +454,7 @@ export class BooksService {
         select: { id: true },
       });
     }
-    
+
     const metadata: any = { ...(existingBook.metadata as any || {}) };
     if (dto.publisher) metadata.publisher = dto.publisher.trim();
     if (dto.publishedYear) {
@@ -384,7 +466,7 @@ export class BooksService {
       metadata.publishedYear = year;
     }
     if (dto.mrp !== undefined) metadata.mrp = parseFloat(dto.mrp as any);
-    
+
     const updateData: any = {
       title: dto.title?.trim() || existingBook.title,
       price: dto.price !== undefined ? parseFloat(dto.price as any) : Number(existingBook.price),
@@ -396,10 +478,10 @@ export class BooksService {
       status: dto.status || existingBook.status,
       version: existingBook.version + 1,
     };
-    
+
     if (author) updateData.author = { connect: { id: author.id } };
     if (genre) updateData.genre = { connect: { id: genre.id } };
-    
+
     const updatedBook = await this.prisma.client.book.update({
       where: { id },
       data: updateData,
@@ -408,10 +490,10 @@ export class BooksService {
         genre: true,
       },
     });
-    
+
     const updatedMetadata = updatedBook.metadata as any;
     const priceNumber = Number(updatedBook.price);
-    
+
     return {
       success: true,
       data: {
@@ -543,9 +625,9 @@ export class BooksService {
       select: { name: true },
       orderBy: { name: 'asc' },
     });
-    
+
     const categories = genres.map(genre => genre.name).filter(Boolean);
-    
+
     return {
       success: true,
       data: categories,
@@ -557,9 +639,9 @@ export class BooksService {
       select: { name: true },
       orderBy: { name: 'asc' },
     });
-    
+
     const authorNames = authors.map(author => author.name).filter(Boolean);
-    
+
     return {
       success: true,
       data: authorNames,
@@ -570,14 +652,14 @@ export class BooksService {
     const book = await this.prisma.client.book.findUnique({
       where: { id },
     });
-    
+
     if (!book) {
       throw new NotFoundException(`Book with ID ${id} not found`);
     }
-    
+
     const updatedBook = await this.prisma.client.book.update({
       where: { id },
-      data: { 
+      data: {
         status: statusDto.status,
         version: book.version + 1,
       },
@@ -586,7 +668,7 @@ export class BooksService {
         genre: true,
       },
     });
-    
+
     return {
       success: true,
       data: {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { 
-  Menu, Package, Clock, CheckCircle, Loader2, RefreshCw, MapPin, Truck, Building2
+  Menu, Package, Clock, CheckCircle, Loader2, RefreshCw, MapPin, Building2
 } from "lucide-react";
 import { Sidebar, MobileSidebarDrawer } from "../../components/layout/AdminSidebar";
 import { useLocation } from "react-router-dom";
@@ -37,9 +37,6 @@ const ShippingQueue: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ShipmentStatus>("Waiting");
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [selectedForDelivery, setSelectedForDelivery] = useState<Set<string>>(new Set());
-  const [inlineEdits, setInlineEdits] = useState<Record<string, { trackingNumber: string; courier: string }>>({});
 
   const location = useLocation();
 
@@ -51,26 +48,37 @@ const ShippingQueue: React.FC = () => {
     window.location.href = '/login';
   };
 
-  // Helper to extract institute name and clean address
+  // ────────────────────────────────────────────────
+  //   Improved address parser — handles string & object
+  // ────────────────────────────────────────────────
   const parseCharityAddress = (address: CharityAddressData | string): { instituteName: string; fullAddress: string } => {
     if (typeof address === 'string') {
-      const lines = address.trim().split('\n').map(l => l.trim()).filter(Boolean);
-      const instituteName = lines[0] || 'Unknown Institute';
-      const rest = lines.slice(1).join(', ');
-      return { instituteName, fullAddress: rest || 'Address details missing' };
+      const lines = address.trim().split('\n').filter(Boolean);
+      if (lines.length === 0) return { instituteName: 'Unknown', fullAddress: 'No address' };
+      const instituteName = lines[0].trim();
+      const fullAddress = lines.slice(1).join(', ').trim() || 'Address details missing';
+      return { instituteName, fullAddress };
     }
 
-    if (typeof address === 'object' && address !== null) {
-      const instituteName = address.instituteName || 
-        (address.streetAddress?.split('\n')[0]?.trim()) || 
-        'Unknown Institute';
+    // object case
+    if (address && typeof address === 'object') {
+      let instituteName = address.instituteName || 'Unknown Institute';
 
-      const parts = [];
-      if (address.displayStreetAddress) parts.push(address.displayStreetAddress);
-      else if (address.streetAddress) {
-        const lines = address.streetAddress.split('\n');
-        parts.push(lines.slice(1).join(', ').trim());
+      const parts: string[] = [];
+      if (address.displayStreetAddress) {
+        parts.push(address.displayStreetAddress);
+      } else if (address.streetAddress) {
+        const streetLines = address.streetAddress.split('\n').map(l => l.trim()).filter(Boolean);
+        if (streetLines.length > 0) {
+          if (!instituteName || instituteName === 'Unknown Institute') {
+            instituteName = streetLines[0];
+            parts.push(...streetLines.slice(1));
+          } else {
+            parts.push(...streetLines);
+          }
+        }
       }
+
       if (address.apartment) parts.push(address.apartment);
       if (address.city) parts.push(address.city);
       if (address.state) parts.push(address.state);
@@ -104,6 +112,7 @@ const ShippingQueue: React.FC = () => {
       if (!res.ok) throw new Error('Failed to load charity batches');
 
       const data = await res.json();
+      console.log("Fetched batches:", data); // ← helpful for debugging
 
       const batchMap = new Map<number, Shipment>();
 
@@ -113,11 +122,11 @@ const ShippingQueue: React.FC = () => {
           existing.totalBooks += s.totalBooks || 0;
         } else {
           batchMap.set(s.batchId, {
-            id: s.id,
+            id: s.id || `batch-${s.batchId}`,
             batchId: s.batchId,
             trackingNumber: s.trackingNumber || null,
-            courier: s.courier || 'Pending Assignment',
-            assignedPickupTime: s.assignedPickupTime || 'Today',
+            courier: s.courier || null,
+            assignedPickupTime: s.assignedPickupTime || '—',
             status: s.status,
             totalBooks: s.totalBooks || 0,
             charityAddress: s.charityAddress || 'Address not available',
@@ -149,100 +158,6 @@ const ShippingQueue: React.FC = () => {
   const filteredShipments = useMemo(() => {
     return shipments.filter((s) => s.status === activeTab);
   }, [shipments, activeTab]);
-
-  const handleFieldChange = (id: string, field: "trackingNumber" | "courier", value: string) => {
-    setInlineEdits(prev => ({
-      ...prev,
-      [id]: { ...prev[id], [field]: value }
-    }));
-  };
-
-  const handleMarkAsDelivered = async (batchId: number, shipmentId: string) => {
-    const edits = inlineEdits[shipmentId] ?? { trackingNumber: "", courier: "" };
-    const tracking = edits.trackingNumber?.trim();
-    const courier = edits.courier?.trim();
-
-    const token = getToken();
-    if (!token) return;
-
-    try {
-      setSaving(true);
-      const res = await fetch(`${API_BASE_URL}/shipments/charity-batch/${batchId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          trackingNumber: tracking || undefined,
-          courier: courier || undefined,
-        })
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to update batch');
-      }
-
-      alert(`Batch #${batchId} marked as Delivered!`);
-      setInlineEdits(prev => {
-        const updated = { ...prev };
-        delete updated[shipmentId];
-        return updated;
-      });
-      fetchShipments();
-      setActiveTab("Delivered");
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleBulkMarkAsDelivered = async () => {
-    if (selectedForDelivery.size === 0) {
-      alert("Please select at least one batch");
-      return;
-    }
-
-    const token = getToken();
-    if (!token) return;
-
-    const batchIds = Array.from(selectedForDelivery).map(id => parseInt(id.split('-')[1]));
-
-    try {
-      setSaving(true);
-      const res = await fetch(`${API_BASE_URL}/shipments/charity-bulk-delivered`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ batchIds })
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to mark as delivered');
-      }
-
-      alert(`${selectedForDelivery.size} batch(es) marked as Delivered`);
-      setSelectedForDelivery(new Set());
-      fetchShipments();
-      setActiveTab("Delivered");
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleDeliverySelection = (id: string) => {
-    const updated = new Set(selectedForDelivery);
-    if (updated.has(id)) updated.delete(id);
-    else updated.add(id);
-    setSelectedForDelivery(updated);
-  };
 
   const StatusBadge = ({ status }: { status: ShipmentStatus }) => {
     const styles = {
@@ -312,11 +227,7 @@ const ShippingQueue: React.FC = () => {
             {SHIPMENT_STAGES.map(tab => (
               <button
                 key={tab}
-                onClick={() => {
-                  setActiveTab(tab);
-                  setSelectedForDelivery(new Set());
-                  setInlineEdits({});
-                }}
+                onClick={() => setActiveTab(tab)}
                 className={`px-5 py-2 text-sm font-medium rounded-t-lg transition whitespace-nowrap ${
                   activeTab === tab
                     ? "bg-white text-blue-600 border-t border-x border-blue-600"
@@ -338,175 +249,73 @@ const ShippingQueue: React.FC = () => {
             </div>
           ) : (
             <>
-              {/* Mobile View */}
+              {/* Mobile Cards */}
               <div className="block md:hidden space-y-4">
                 {filteredShipments.length === 0 ? (
                   <div className="text-center py-12 bg-white rounded-lg border border-dashed border-gray-300">
                     <p className="text-gray-500">No batches in {activeTab} status</p>
                   </div>
                 ) : (
-                  filteredShipments.map(shipment => {
-                    const isWaiting = shipment.status === "Waiting";
-                    const edits = inlineEdits[shipment.id] ?? { trackingNumber: "", courier: "" };
-
-                    return (
-                      <div key={shipment.id} className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex-1">
-                            <p className="text-xl font-bold text-gray-900">{shipment.id}</p>
-                            <p className="text-sm text-gray-600 mt-1">{shipment.totalBooks} books</p>
-                            <div className="mt-3">
-                              <AddressDisplay address={shipment.charityAddress} />
-                            </div>
-                          </div>
-                          <StatusBadge status={shipment.status} />
+                  filteredShipments.map(shipment => (
+                    <div key={shipment.id} className="bg-white p-5 rounded-lg border border-gray-200 shadow-sm">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <p className="text-lg font-bold text-gray-900">Batch #{shipment.batchId}</p>
+                          <p className="text-sm text-gray-600 mt-1">{shipment.totalBooks} books</p>
                         </div>
-
-                        {isWaiting && (
-                          <div className="space-y-3 mt-6 pt-4 border-t border-gray-200">
-                            <input
-                              type="text"
-                              placeholder="Tracking Number (optional)"
-                              value={edits.trackingNumber}
-                              onChange={(e) => handleFieldChange(shipment.id, "trackingNumber", e.target.value)}
-                              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-mono"
-                            />
-                            <input
-                              type="text"
-                              placeholder="Courier Name (optional)"
-                              value={edits.courier}
-                              onChange={(e) => handleFieldChange(shipment.id, "courier", e.target.value)}
-                              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm"
-                            />
-                            <button
-                              onClick={() => handleMarkAsDelivered(shipment.batchId, shipment.id)}
-                              disabled={saving}
-                              className="w-full py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                              {saving ? <Loader2 className="animate-spin" size={18} /> : null}
-                              Mark as Delivered
-                            </button>
-                          </div>
-                        )}
+                        <StatusBadge status={shipment.status} />
                       </div>
-                    );
-                  })
+                      <div className="mt-2">
+                        <AddressDisplay address={shipment.charityAddress} />
+                      </div>
+                      <div className="mt-4 text-sm text-gray-600">
+                        Updated: {shipment.assignedPickupTime}
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
 
-              {/* Desktop Table */}
+              {/* Desktop Table – simplified columns */}
               <div className="hidden md:block bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="px-6 py-4 w-12 text-left">
-                        <input
-                          type="checkbox"
-                          checked={selectedForDelivery.size === filteredShipments.length && filteredShipments.length > 0}
-                          onChange={(e) => setSelectedForDelivery(
-                            e.target.checked ? new Set(filteredShipments.map(s => s.id)) : new Set()
-                          )}
-                          className="rounded border-gray-300 text-green-600"
-                        />
-                      </th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Batch ID</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Books</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Delivery To</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tracking</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Courier</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Updated</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
-                      {activeTab === "Waiting" && <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Action</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {filteredShipments.length === 0 ? (
                       <tr>
-                        <td colSpan={activeTab === "Waiting" ? 8 : 7} className="text-center py-16 text-gray-500">
+                        <td colSpan={5} className="text-center py-16 text-gray-500">
                           No charity batches in <strong>{activeTab}</strong> status
                         </td>
                       </tr>
                     ) : (
-                      filteredShipments.map(shipment => {
-                        const isWaiting = shipment.status === "Waiting";
-                        const edits = inlineEdits[shipment.id] ?? { trackingNumber: "", courier: "" };
-
-                        return (
-                          <tr key={shipment.id} className={isWaiting ? "bg-blue-50" : "hover:bg-gray-50"}>
-                            <td className="px-6 py-4">
-                              <input
-                                type="checkbox"
-                                checked={selectedForDelivery.has(shipment.id)}
-                                onChange={() => toggleDeliverySelection(shipment.id)}
-                                className="rounded border-gray-300 text-green-600"
-                              />
-                            </td>
-                            <td className="px-6 py-4 font-semibold text-gray-900">{shipment.id}</td>
-                            <td className="px-6 py-4">{shipment.totalBooks} books</td>
-                            <td className="px-6 py-4 text-sm">
-                              <AddressDisplay address={shipment.charityAddress} />
-                            </td>
-                            <td className="px-6 py-4">
-                              {isWaiting ? (
-                                <input
-                                  type="text"
-                                  value={edits.trackingNumber}
-                                  onChange={(e) => handleFieldChange(shipment.id, "trackingNumber", e.target.value)}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
-                                  placeholder="Optional"
-                                />
-                              ) : (
-                                <span className="font-mono text-blue-600">{shipment.trackingNumber || "N/A"}</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isWaiting ? (
-                                <input
-                                  type="text"
-                                  value={edits.courier}
-                                  onChange={(e) => handleFieldChange(shipment.id, "courier", e.target.value)}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                  placeholder="Optional"
-                                />
-                              ) : (
-                                <span>{shipment.courier}</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-600">{shipment.assignedPickupTime}</td>
-                            <td className="px-6 py-4"><StatusBadge status={shipment.status} /></td>
-                            {isWaiting && (
-                              <td className="px-6 py-4">
-                                <button
-                                  onClick={() => handleMarkAsDelivered(shipment.batchId, shipment.id)}
-                                  disabled={saving}
-                                  className="px-5 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-                                >
-                                  {saving ? <Loader2 className="animate-spin" size={16} /> : null}
-                                  Mark as Delivered
-                                </button>
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      })
+                      filteredShipments.map(shipment => (
+                        <tr key={shipment.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 font-medium text-gray-900">#{shipment.batchId}</td>
+                          <td className="px-6 py-4">{shipment.totalBooks} books</td>
+                          <td className="px-6 py-4 text-sm">
+                            <AddressDisplay address={shipment.charityAddress} />
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-600">
+                            {shipment.assignedPickupTime || '—'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <StatusBadge status={shipment.status} />
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
               </div>
             </>
-          )}
-
-          {activeTab === "Waiting" && selectedForDelivery.size > 0 && (
-            <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 shadow-lg lg:static lg:shadow-none lg:mt-8">
-              <button
-                onClick={handleBulkMarkAsDelivered}
-                disabled={saving}
-                className="w-full lg:w-auto px-8 py-3 bg-green-600 text-white font-bold rounded-lg disabled:opacity-50 flex items-center justify-center gap-3 hover:bg-green-700 transition"
-              >
-                <Truck size={20} />
-                {saving ? "Processing..." : `Mark Selected (${selectedForDelivery.size}) as Delivered`}
-              </button>
-            </div>
           )}
         </div>
       </div>

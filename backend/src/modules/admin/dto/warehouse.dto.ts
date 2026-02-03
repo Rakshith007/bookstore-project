@@ -1,4 +1,3 @@
-// src/modules/admin/dto/warehouse.dto.ts
 import {
   IsNotEmpty,
   IsArray,
@@ -8,6 +7,8 @@ import {
   IsInt,
   Min,
   IsEnum,
+  IsOptional,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderStatus } from '@prisma/client';
@@ -40,17 +41,66 @@ export class CompleteBatchPickingDto {
   batchItems!: BatchItemDto[];
 }
 
-// UPDATED: batchId is now a String
+// UPDATED: Added all new fields for packing slip
 export class GeneratePackingSlipDto {
   @IsString()
   @IsNotEmpty()
-  batchId!: string;  // ← Changed from number to string
+  batchId!: string;
 
   @IsString()
-  @IsNotEmpty()
-  internalTrackingId!: string;
+  @IsOptional()
+  internalTrackingId?: string;
 
   @IsObject()
+  @IsOptional()
+  charityAddress?: Record<string, any>;
+
+  @IsString()
+  @IsOptional()
+  securityCode?: string;
+
+  @IsString()
+  @IsOptional()
+  qrData?: string;
+
+  @IsString()
+  @IsOptional()
+  verificationUrl?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  securityCodeSent?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  sharedToWarehouse?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  markedAsPacked?: boolean;
+}
+
+// NEW DTOs
+export class UpdatePackingSlipWorkflowDto {
+  @IsString()
   @IsNotEmpty()
-  charityAddress!: Record<string, any>;
+  batchId!: string;
+
+  @IsBoolean()
+  @IsOptional()
+  securityCodeSent?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  sharedToWarehouse?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  markedAsPacked?: boolean;
+}
+
+export class GenerateSecurityCodeDto {
+  @IsString()
+  @IsNotEmpty()
+  batchId!: string;
 }

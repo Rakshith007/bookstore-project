@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Menu, Printer, Download, Package, 
-  ArrowLeft, Building2, Plus, Edit2, Trash2, Loader2, Scissors, 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Menu, Printer, Download, Package,
+  ArrowLeft, Building2, Plus, Edit2, Trash2, Loader2, Scissors,
   AlertCircle, MapPin, Phone, CheckCircle, QrCode, Copy, Shield
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -34,6 +34,21 @@ interface BatchDetails {
   items: BatchItem[];
 }
 
+interface PackingSlipData {
+  batchId: string;
+  securityCode: string;
+  expiryDate: string;
+  charityAddress?: CharityAddress;
+  qrData?: string;
+  verificationUrl?: string;
+  securityCodeSent?: boolean;
+  sharedToWarehouse?: boolean;
+  markedAsPacked?: boolean;
+}
+
+// Define workflow steps
+type WorkflowStep = 'security-code' | 'share-warehouse' | 'mark-packed' | 'completed';
+
 const GenerateLabelPage: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [batch, setBatch] = useState<BatchDetails | null>(null);
@@ -45,12 +60,26 @@ const GenerateLabelPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
+
   // QR Code & Security Code States
   const [securityCode, setSecurityCode] = useState<string>('');
   const [qrData, setQrData] = useState<string>('');
   const [verificationUrl, setVerificationUrl] = useState<string>('');
   const [generated, setGenerated] = useState(false);
+  const [fetchingSecurityCode, setFetchingSecurityCode] = useState(false);
+
+  // Workflow state
+  const [currentStep, setCurrentStep] = useState<WorkflowStep>('security-code');
+  const [securityCodeSent, setSecurityCodeSent] = useState(false);
+  const [sharedToWarehouse, setSharedToWarehouse] = useState(false);
+  const [markedAsPacked, setMarkedAsPacked] = useState(false);
+
+  // Loading states
+  const [loadingStates, setLoadingStates] = useState({
+    batch: true,
+    addresses: true,
+    packingSlip: false,
+  });
 
   const [formData, setFormData] = useState({
     instituteName: '',
@@ -66,20 +95,48 @@ const GenerateLabelPage: React.FC = () => {
   const location = useLocation();
   const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
-  const getToken = () => localStorage.getItem('authToken');
+  // Get token helper
+  const getToken = useCallback(() => localStorage.getItem('authToken'), []);
+
+  // Session handling
+  const handleSessionExpired = useCallback(() => {
+    localStorage.removeItem('authToken');
+    alert('Your session has expired. Please log in again.');
+    navigate('/login');
+  }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem('authToken');
     navigate('/login');
   };
 
-  const handleSessionExpired = () => {
-    localStorage.removeItem('authToken');
-    alert('Your session has expired. Please log in again.');
-    navigate('/login');
-  };
+  // Initialize workflow from saved state
+  useEffect(() => {
+    // Load workflow state from localStorage
+    const savedState = localStorage.getItem(`workflow-${batch?.batchId}`);
+    if (savedState) {
+      try {
+        const parsed = JSON.parse(savedState);
+        if (parsed.securityCodeSent) {
+          setSecurityCodeSent(true);
+          setCurrentStep('share-warehouse');
+        }
+        if (parsed.sharedToWarehouse) {
+          setSharedToWarehouse(true);
+          setCurrentStep('mark-packed');
+        }
+        if (parsed.markedAsPacked) {
+          setMarkedAsPacked(true);
+          setCurrentStep('completed');
+        }
+      } catch (e) {
+        console.error('Failed to load workflow state:', e);
+      }
+    }
+  }, [batch?.batchId]);
 
-  const fetchAddresses = async () => {
+  // Fetch addresses
+  const fetchAddresses = useCallback(async () => {
     const token = getToken();
     if (!token) {
       handleSessionExpired();
@@ -87,7 +144,7 @@ const GenerateLabelPage: React.FC = () => {
     }
 
     try {
-      setLoading(true);
+      setLoadingStates(prev => ({ ...prev, addresses: true }));
       const res = await fetch(`${API_BASE_URL}/addresses`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -103,7 +160,7 @@ const GenerateLabelPage: React.FC = () => {
       const fetched: CharityAddress[] = result.data.map((addr: any) => {
         const fullStreet = addr.streetAddress?.trim() || '';
         const lines = fullStreet.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        
+
         const instituteName = lines.length > 0 ? lines[0] : 'Unnamed Institute';
         const displayStreetAddress = lines.length > 1 ? lines.slice(1).join(', ') : '';
 
@@ -121,17 +178,124 @@ const GenerateLabelPage: React.FC = () => {
       });
 
       setAddresses(fetched);
-      if (fetched.length > 0 && !selectedAddress) {
-        setSelectedAddress(fetched[0]);
-      }
     } catch (err) {
       console.error(err);
       alert('Could not load addresses. Please try again.');
     } finally {
-      setLoading(false);
+      setLoadingStates(prev => ({ ...prev, addresses: false }));
     }
-  };
+  }, [API_BASE_URL, getToken, handleSessionExpired]);
 
+  // Load existing packing slip data
+  const fetchExistingPackingSlip = useCallback(async () => {
+    if (!batch?.batchId) return null;
+
+    const token = getToken();
+    if (!token) return null;
+
+    try {
+      setLoadingStates(prev => ({ ...prev, packingSlip: true }));
+      const response = await fetch(`${API_BASE_URL}/admin/warehouse/packing-slip/${batch.batchId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          // No packing slip exists yet, which is fine
+          return null;
+        }
+        throw new Error('Failed to fetch packing slip');
+      }
+
+      const result = await response.json();
+      if (result.success && result.data) {
+        const slip: PackingSlipData = result.data;
+        
+        // Restore security code
+        if (slip.securityCode) {
+          setSecurityCode(slip.securityCode);
+        }
+
+        // Restore QR data
+        if (slip.qrData) {
+          setQrData(slip.qrData);
+          setVerificationUrl(slip.verificationUrl || slip.qrData);
+          setGenerated(true);
+        }
+
+        // Restore workflow state
+        if (slip.securityCodeSent) {
+          setSecurityCodeSent(true);
+          setCurrentStep('share-warehouse');
+        }
+        if (slip.sharedToWarehouse) {
+          setSharedToWarehouse(true);
+          setCurrentStep('mark-packed');
+        }
+        if (slip.markedAsPacked) {
+          setMarkedAsPacked(true);
+          setCurrentStep('completed');
+        }
+
+        return slip;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error loading packing slip:', error);
+      return null;
+    } finally {
+      setLoadingStates(prev => ({ ...prev, packingSlip: false }));
+    }
+  }, [batch?.batchId, API_BASE_URL, getToken]);
+
+  // Generate or fetch security code
+  const fetchOrGenerateSecurityCode = useCallback(async () => {
+    if (!batch?.batchId) return;
+
+    const token = getToken();
+    if (!token) {
+      handleSessionExpired();
+      return;
+    }
+
+    setFetchingSecurityCode(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/warehouse/generate-packing-slip`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          batchId: batch.batchId,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.data?.securityCode) {
+          setSecurityCode(data.data.securityCode);
+          console.log('Security code retrieved/generated:', data.data.securityCode);
+        }
+      } else {
+        console.error('Failed to generate/retrieve security code. Status:', response.status);
+        // Fallback: try localStorage
+        const fallback = localStorage.getItem(`security-code-${batch.batchId}`);
+        if (fallback) {
+          setSecurityCode(fallback);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching security code:', err);
+    } finally {
+      setFetchingSecurityCode(false);
+    }
+  }, [batch?.batchId, API_BASE_URL, getToken, handleSessionExpired]);
+
+  // Initialize batch from location state
   useEffect(() => {
     const incomingBatch = location.state?.batch;
     const incomingBatchId = location.state?.batchId;
@@ -168,43 +332,98 @@ const GenerateLabelPage: React.FC = () => {
       totalBooks,
       items: flatItems
     };
-    
+
     setBatch(newBatch);
-    
-    // Generate QR code automatically
-    if (selectedAddress && newBatch) {
-      generateQRCodeAutomatically(newBatch, selectedAddress);
-    }
+    setLoadingStates(prev => ({ ...prev, batch: false }));
   }, [location.state, navigate]);
 
+  // Load initial data when batch is ready
   useEffect(() => {
-    fetchAddresses();
-  }, []);
+    const loadInitialData = async () => {
+      if (!batch?.batchId) return;
 
-  // Generate QR code when address changes
+      // Load addresses first
+      await fetchAddresses();
+
+      // Load existing packing slip data
+      const existingSlip = await fetchExistingPackingSlip();
+
+      // If no security code exists, generate one
+      if (!existingSlip?.securityCode && !securityCode) {
+        await fetchOrGenerateSecurityCode();
+      }
+
+      // Check localStorage fallback for QR data
+      const savedQR = localStorage.getItem(`qr-data-${batch.batchId}`);
+      if (savedQR && !qrData) {
+        try {
+          const parsed = JSON.parse(savedQR);
+          setQrData(parsed.qrData);
+          setVerificationUrl(parsed.verificationUrl || parsed.qrData);
+          setGenerated(true);
+        } catch (e) {
+          localStorage.removeItem(`qr-data-${batch.batchId}`);
+        }
+      }
+
+      setLoading(false);
+    };
+
+    loadInitialData();
+  }, [batch?.batchId, fetchAddresses, fetchExistingPackingSlip, fetchOrGenerateSecurityCode, qrData, securityCode]);
+
+  // Generate QR code when all data is available
   useEffect(() => {
-    if (batch && selectedAddress && !generated) {
-      generateQRCodeAutomatically(batch, selectedAddress);
+    const generateQRCodeIfNeeded = async () => {
+      // Don't regenerate if already generated
+      if (generated) return;
+
+      // Wait for all required data
+      if (!batch || !selectedAddress || !securityCode) {
+        return;
+      }
+
+      // If QR data already exists (from backend or localStorage), use it
+      if (qrData) {
+        setGenerated(true);
+        return;
+      }
+
+      // Generate new QR code
+      await generateQRCodeAutomatically(batch, selectedAddress);
+    };
+
+    generateQRCodeIfNeeded();
+  }, [batch, selectedAddress, securityCode, generated, qrData]);
+
+  // Save workflow state to localStorage
+  useEffect(() => {
+    if (batch?.batchId) {
+      localStorage.setItem(`workflow-${batch.batchId}`, JSON.stringify({
+        securityCodeSent,
+        sharedToWarehouse,
+        markedAsPacked,
+        timestamp: new Date().toISOString()
+      }));
     }
-  }, [selectedAddress, batch]);
+  }, [batch?.batchId, securityCodeSent, sharedToWarehouse, markedAsPacked]);
 
-  const generateQRCodeAutomatically = (batchData: BatchDetails, address: CharityAddress) => {
-    // Generate a 6-digit random code if not already generated
+  const generateQRCodeAutomatically = async (batchData: BatchDetails, address: CharityAddress) => {
     if (!securityCode) {
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setSecurityCode(code);
+      console.log('Waiting for security code from backend...');
+      return;
     }
-    
+
     // Calculate expiry date (2 months from now)
     const calculateExpiryDate = () => {
       const expiryDate = new Date();
       expiryDate.setMonth(expiryDate.getMonth() + 2);
       return expiryDate.toISOString();
     };
-    
+
     const expiryDate = calculateExpiryDate();
-    
-    // Create verification URL with ALL actual data as query parameters
+
+    // Create verification URL
     const baseUrl = window.location.origin;
     const verificationPageUrl = `${baseUrl}/verify-delivery/${batchData.batchId}?` +
       `code=${securityCode}&` +
@@ -217,17 +436,56 @@ const GenerateLabelPage: React.FC = () => {
       `totalBooks=${batchData.totalBooks}&` +
       `expiry=${encodeURIComponent(expiryDate)}&` +
       `items=${encodeURIComponent(JSON.stringify(batchData.items))}`;
-    
+
     setVerificationUrl(verificationPageUrl);
-    
-    // Store the QR data (just the URL)
     setQrData(verificationPageUrl);
     setGenerated(true);
-    
-    console.log('QR Code generated. Verification URL:', verificationPageUrl);
-    console.log('Security Code:', securityCode);
+
+    // Save to localStorage as immediate fallback
+    localStorage.setItem(`qr-data-${batchData.batchId}`, JSON.stringify({
+      qrData: verificationPageUrl,
+      verificationUrl: verificationPageUrl,
+      address,
+      timestamp: new Date().toISOString()
+    }));
+
+    // Save to backend
+    await saveQRDataToBackend(verificationPageUrl, address);
   };
 
+  const saveQRDataToBackend = async (qrData: string, address: CharityAddress) => {
+    if (!batch?.batchId) return;
+
+    const token = getToken();
+    if (!token) {
+      handleSessionExpired();
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/warehouse/generate-packing-slip`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          batchId: batch.batchId,
+          charityAddress: address,
+          qrData: qrData,
+          verificationUrl: qrData,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to save QR data to backend');
+      }
+    } catch (err) {
+      console.error('Error saving QR data:', err);
+    }
+  };
+
+  // Form handling
   const resetForm = () => {
     setFormData({
       instituteName: '',
@@ -361,7 +619,7 @@ const GenerateLabelPage: React.FC = () => {
   // Generate WhatsApp Message for Security Code
   const generateSecurityCodeWhatsAppMessage = (code: string) => {
     if (!selectedAddress || !batch) return '';
-    
+
     const expiryDate = new Date();
     expiryDate.setMonth(expiryDate.getMonth() + 2);
     const formattedExpiryDate = expiryDate.toLocaleDateString('en-GB', {
@@ -369,7 +627,7 @@ const GenerateLabelPage: React.FC = () => {
       month: 'long',
       year: 'numeric'
     });
-    
+
     return `*DELIVERY VERIFICATION CODE*\n\n` +
       `*Institute:* ${selectedAddress.instituteName}\n` +
       `*Batch ID:* ${batch.batchId}\n` +
@@ -390,74 +648,89 @@ const GenerateLabelPage: React.FC = () => {
       alert('Phone number or security code not available');
       return;
     }
-    
+
     const message = generateSecurityCodeWhatsAppMessage(securityCode);
     const encodedMessage = encodeURIComponent(message);
     const whatsappUrl = `https://wa.me/${selectedAddress.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
-    
+
     window.open(whatsappUrl, '_blank');
+
+    // Mark security code as sent and move to next step
+    setSecurityCodeSent(true);
+    setCurrentStep('share-warehouse');
+
+    // Save to localStorage
+    if (batch?.batchId) {
+      localStorage.setItem(`security-sent-${batch.batchId}`, 'true');
+    }
+
+    alert('Security code sent via WhatsApp! You can now proceed to "Share to Warehouse".');
   };
 
   const handleMarkAsShipped = async () => {
-    if (!batch || !selectedAddress || isSubmitting) return;
+  if (!batch || !selectedAddress || isSubmitting) return;
 
-    const token = getToken();
-    if (!token) {
-      handleSessionExpired();
-      return;
+  const token = getToken();
+  if (!token) {
+    handleSessionExpired();
+    return;
+  }
+
+  setIsSubmitting(true);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/warehouse/generate-packing-slip`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        batchId: batch.batchId,
+        charityAddress: selectedAddress, // Simplified - backend can handle the structure
+        securityCode: securityCode,
+        qrData: qrData,
+        verificationUrl: verificationUrl,
+        markedAsPacked: true // ← CHANGED FROM status: 'PACKED'
+      }),
+    });
+    
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to save packing slip');
     }
 
-    setIsSubmitting(true);
+    // Mark as packed and move to completed
+    setMarkedAsPacked(true);
+    setCurrentStep('completed');
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/admin/warehouse/generate-packing-slip`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          batchId: batch.batchId,
-          internalTrackingId: null,
-          charityAddress: {
-            ...selectedAddress,
-            name: selectedAddress.instituteName,
-            streetAddress: selectedAddress.streetAddress
-          },
+    // Save to localStorage
+    if (batch?.batchId) {
+      localStorage.setItem(`marked-packed-${batch.batchId}`, 'true');
+    }
+
+    alert('Packing slip saved and batch marked as packed!');
+
+    navigate('/admin/shippingqueue', {
+      state: {
+        newShipment: {
+          id: batch.batchId,
+          charityName: selectedAddress.instituteName,
+          totalBooks: batch.totalBooks,
+          address: selectedAddress,
           securityCode: securityCode,
           qrData: qrData,
-          verificationUrl: verificationUrl,
-          expiryDate: new Date(new Date().setMonth(new Date().getMonth() + 2)).toISOString()
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to save packing slip');
-      }
-
-      alert('Packing slip saved and batch marked as packed! QR code and security code have been generated automatically.');
-
-      navigate('/admin/shippingqueue', {
-        state: {
-          newShipment: {
-            id: batch.batchId,
-            charityName: selectedAddress.instituteName,
-            totalBooks: batch.totalBooks,
-            address: selectedAddress,
-            securityCode: securityCode,
-            qrData: qrData,
-            verificationUrl: verificationUrl
-          }
+          verificationUrl: verificationUrl
         }
-      });
-    } catch (err: any) {
-      console.error(err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      }
+    });
+  } catch (err: any) {
+    console.error(err);
+    alert(`Error: ${err.message}`);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const handleShareToWarehouse = () => {
     if (!batch || !selectedAddress) return;
@@ -511,19 +784,36 @@ const GenerateLabelPage: React.FC = () => {
       navigator.clipboard.writeText(message);
       alert('Packing slip copied to clipboard! Paste in WhatsApp Web.');
     }
+
+    // Mark as shared and move to next step
+    setSharedToWarehouse(true);
+    setCurrentStep('mark-packed');
+
+    // Save to localStorage
+    if (batch?.batchId) {
+      localStorage.setItem(`shared-warehouse-${batch.batchId}`, 'true');
+    }
+
+    alert('Shared to warehouse! You can now proceed to "Mark as Packed & Add to Queue".');
   };
 
-  if (!batch) {
-    return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-600">Loading batch...</div>;
-  }
+  // Check if buttons should be disabled
+  const isSecurityCodeDisabled = !selectedAddress?.phone || !securityCode || fetchingSecurityCode;
+  const isShareWarehouseDisabled = !securityCodeSent;
+  const isMarkAsPackedDisabled = !sharedToWarehouse;
 
-  if (loading) {
+  // Show loading state
+  if (loading || loadingStates.batch) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <Loader2 className="animate-spin" size={40} />
-        <span className="ml-3 text-lg">Loading addresses...</span>
+        <span className="ml-3 text-lg">Loading batch details...</span>
       </div>
     );
+  }
+
+  if (!batch) {
+    return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-600">No batch data available</div>;
   }
 
   const totalValue = batch.items.reduce((s, i) => s + i.price * i.quantity, 0);
@@ -545,10 +835,10 @@ const GenerateLabelPage: React.FC = () => {
       <div className="hidden lg:block no-print">
         <Sidebar onLogout={handleLogout} />
       </div>
-      <MobileSidebarDrawer 
-        isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)} 
-        onLogout={handleLogout} 
+      <MobileSidebarDrawer
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        onLogout={handleLogout}
       />
 
       <div className="lg:hidden sticky top-0 z-30 bg-white border-b px-4 py-3 flex items-center gap-3 shadow-sm no-print">
@@ -564,14 +854,36 @@ const GenerateLabelPage: React.FC = () => {
             <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-blue-600">
               <ArrowLeft size={20} /> Back
             </button>
-            {/* QR Code Status Badge */}
-            {securityCode && (
-              <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-full">
-                <Shield size={16} />
-                <span className="text-sm font-medium">QR Code Generated</span>
+            {/* Workflow Progress Indicator */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === 'security-code' ? 'bg-blue-600 text-white' : securityCodeSent ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                  {securityCodeSent ? <CheckCircle size={16} /> : '1'}
+                </div>
+                <div className={`w-16 h-1 ${securityCodeSent ? 'bg-green-600' : 'bg-gray-300'}`}></div>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === 'share-warehouse' ? 'bg-blue-600 text-white' : sharedToWarehouse ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                  {sharedToWarehouse ? <CheckCircle size={16} /> : '2'}
+                </div>
+                <div className={`w-16 h-1 ${sharedToWarehouse ? 'bg-green-600' : 'bg-gray-300'}`}></div>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === 'mark-packed' ? 'bg-blue-600 text-white' : markedAsPacked ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                  {markedAsPacked ? <CheckCircle size={16} /> : '3'}
+                </div>
               </div>
-            )}
+              <span className="text-sm font-medium text-gray-700 ml-2">
+                Step {currentStep === 'security-code' ? '1' : currentStep === 'share-warehouse' ? '2' : '3'} of 3
+              </span>
+            </div>
           </div>
+
+          {/* Loading overlay for packing slip data */}
+          {loadingStates.packingSlip && (
+            <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200 no-print">
+              <div className="flex items-center gap-3">
+                <Loader2 className="animate-spin text-blue-600" size={20} />
+                <span className="text-blue-700">Loading existing packing slip data...</span>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6 no-print">
@@ -630,7 +942,12 @@ const GenerateLabelPage: React.FC = () => {
 
                 {!showForm ? (
                   <div className="space-y-3">
-                    {addresses.length === 0 ? (
+                    {loadingStates.addresses ? (
+                      <div className="text-center py-8">
+                        <Loader2 className="animate-spin mx-auto mb-3" size={24} />
+                        <p className="text-gray-500">Loading addresses...</p>
+                      </div>
+                    ) : addresses.length === 0 ? (
                       <div className="text-center py-12 text-gray-500">
                         <Building2 size={48} className="mx-auto mb-3 opacity-30" />
                         <p>No addresses saved yet</p>
@@ -641,11 +958,10 @@ const GenerateLabelPage: React.FC = () => {
                         <div
                           key={addr.id}
                           onClick={() => setSelectedAddress(addr)}
-                          className={`p-5 rounded-xl border-2 cursor-pointer transition-all shadow-sm hover:shadow-md ${
-                            selectedAddress?.id === addr.id
+                          className={`p-5 rounded-xl border-2 cursor-pointer transition-all shadow-sm hover:shadow-md ${selectedAddress?.id === addr.id
                               ? 'border-blue-600 bg-blue-50 ring-4 ring-blue-100 shadow-lg'
                               : 'border-gray-200 hover:border-gray-300'
-                          }`}
+                            }`}
                         >
                           <div className="flex justify-between items-start">
                             <div className="flex-1">
@@ -689,60 +1005,60 @@ const GenerateLabelPage: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-3 p-5 bg-gray-50 rounded-xl">
-                    <input 
-                      placeholder="Institute Name *" 
-                      value={formData.instituteName} 
-                      onChange={e => setFormData({...formData, instituteName: e.target.value})} 
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                    <input
+                      placeholder="Institute Name *"
+                      value={formData.instituteName}
+                      onChange={e => setFormData({ ...formData, instituteName: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                    <input 
-                      placeholder="Street Address *" 
-                      value={formData.streetAddress} 
-                      onChange={e => setFormData({...formData, streetAddress: e.target.value})} 
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
+                    <input
+                      placeholder="Street Address *"
+                      value={formData.streetAddress}
+                      onChange={e => setFormData({ ...formData, streetAddress: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
-                    <input 
-                      placeholder="Apartment / Building" 
-                      value={formData.apartment} 
-                      onChange={e => setFormData({...formData, apartment: e.target.value})} 
-                      className="w-full p-3 border border-gray-300 rounded-lg" 
+                    <input
+                      placeholder="Apartment / Building"
+                      value={formData.apartment}
+                      onChange={e => setFormData({ ...formData, apartment: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg"
                     />
                     <div className="grid grid-cols-2 gap-3">
-                      <input 
-                        placeholder="City *" 
-                        value={formData.city} 
-                        onChange={e => setFormData({...formData, city: e.target.value})} 
-                        className="p-3 border border-gray-300 rounded-lg" 
+                      <input
+                        placeholder="City *"
+                        value={formData.city}
+                        onChange={e => setFormData({ ...formData, city: e.target.value })}
+                        className="p-3 border border-gray-300 rounded-lg"
                       />
-                      <input 
-                        placeholder="State / Region" 
-                        value={formData.state} 
-                        onChange={e => setFormData({...formData, state: e.target.value})} 
-                        className="p-3 border border-gray-300 rounded-lg" 
+                      <input
+                        placeholder="State / Region"
+                        value={formData.state}
+                        onChange={e => setFormData({ ...formData, state: e.target.value })}
+                        className="p-3 border border-gray-300 rounded-lg"
                       />
                     </div>
-                    <input 
-                      placeholder="Country *" 
-                      value={formData.country} 
-                      onChange={e => setFormData({...formData, country: e.target.value})} 
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
+                    <input
+                      placeholder="Country *"
+                      value={formData.country}
+                      onChange={e => setFormData({ ...formData, country: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
-                    <input 
-                      placeholder="Phone" 
-                      value={formData.phone} 
-                      onChange={e => setFormData({...formData, phone: e.target.value})} 
-                      className="w-full p-3 border border-gray-300 rounded-lg" 
+                    <input
+                      placeholder="Phone"
+                      value={formData.phone}
+                      onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg"
                     />
                     <div className="flex gap-3 pt-3">
-                      <button 
-                        onClick={saveAddress} 
-                        disabled={saving} 
+                      <button
+                        onClick={saveAddress}
+                        disabled={saving}
                         className="flex-1 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-70"
                       >
                         {saving ? 'Saving...' : editingAddress ? 'Update Address' : 'Save Address'}
                       </button>
-                      <button 
-                        onClick={() => { setShowForm(false); resetForm(); }} 
+                      <button
+                        onClick={() => { setShowForm(false); resetForm(); }}
                         className="px-6 py-3 border border-red-600 text-red-600 rounded-lg hover:bg-red-50"
                       >
                         Cancel
@@ -751,7 +1067,7 @@ const GenerateLabelPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Selected Address Preview - RESTORED FULL UI */}
+                {/* Selected Address Preview */}
                 {selectedAddress && !showForm && (
                   <div className="mt-8 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-300 shadow-lg">
                     <div className="flex items-center gap-3 mb-4">
@@ -778,14 +1094,14 @@ const GenerateLabelPage: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    
-                    {/* Security Code Section - RESTORED WITH COPY BUTTON */}
-                    {securityCode && (
+
+                    {/* Security Code Section */}
+                    {securityCode ? (
                       <div className="mt-6 pt-4 border-t border-blue-200">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-2">
                             <Shield size={18} className="text-blue-600" />
-                            <h4 className="font-bold text-blue-900">Security Code Generated</h4>
+                            <h4 className="font-bold text-blue-900">Security Code</h4>
                           </div>
                           <button
                             onClick={() => {
@@ -812,7 +1128,14 @@ const GenerateLabelPage: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                    )}
+                    ) : fetchingSecurityCode ? (
+                      <div className="mt-6 pt-4 border-t border-blue-200">
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="animate-spin" size={20} />
+                          <p className="text-blue-700">Generating security code...</p>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -823,11 +1146,14 @@ const GenerateLabelPage: React.FC = () => {
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="bg-gray-100 px-4 py-2 border-b flex justify-between items-center no-print">
                   <h3 className="text-sm font-bold text-gray-700">Print Preview</h3>
-                  {selectedAddress && securityCode && (
+                  {selectedAddress && securityCode && generated && (
                     <div className="flex items-center gap-2">
                       <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">Ready</span>
                       <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-medium">QR Embedded</span>
                     </div>
+                  )}
+                  {!generated && securityCode && (
+                    <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium">Generating QR...</span>
                   )}
                 </div>
 
@@ -867,15 +1193,15 @@ const GenerateLabelPage: React.FC = () => {
                               ))}
                             </div>
                           </div>
-                          
-                          {/* QR Code Section - Bigger with URL */}
+
+                          {/* QR Code Section */}
                           <div className="pt-4">
                             <div className="text-center">
                               <p className="text-[10px] font-bold uppercase mb-3">Delivery Verification QR Code</p>
                               <div className="flex justify-center mb-2">
                                 <div className="w-36 h-36 border-2 border-gray-400 p-2 bg-white">
                                   {qrData ? (
-                                    <QRCodeSVG 
+                                    <QRCodeSVG
                                       value={qrData}
                                       size={144}
                                       level="H"
@@ -883,7 +1209,11 @@ const GenerateLabelPage: React.FC = () => {
                                     />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                                      <span className="text-[8px] text-center">Generating QR Code...</span>
+                                      {loadingStates.packingSlip ? (
+                                        <Loader2 className="animate-spin" size={24} />
+                                      ) : (
+                                        <span className="text-xs text-gray-500">QR Code Loading...</span>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -975,61 +1305,123 @@ const GenerateLabelPage: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Only show Send Security Code button if phone exists */}
-                    {selectedAddress.phone && securityCode && (
-                      <button
-                        onClick={openWhatsAppWithSecurityCode}
-                        className="w-full py-3 bg-[#25D366] text-white font-medium rounded-lg hover:bg-[#128C7E] flex items-center justify-center gap-2"
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088"/>
-                        </svg>
-                        Send Security Code via WhatsApp
-                      </button>
-                    )}
-
-                    <button 
-                      onClick={handleMarkAsShipped}
-                      disabled={isSubmitting}
-                      className="w-full py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-70"
+                    {/* STEP 1: Send Security Code via WhatsApp */}
+                    <button
+                      onClick={openWhatsAppWithSecurityCode}
+                      disabled={isSecurityCodeDisabled || securityCodeSent}
+                      className={`w-full py-3 font-medium rounded-lg flex items-center justify-center gap-2 ${securityCodeSent
+                          ? 'bg-green-600 text-white hover:bg-green-700 cursor-default'
+                          : isSecurityCodeDisabled
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-[#25D366] text-white hover:bg-[#128C7E]'
+                        }`}
                     >
-                      {isSubmitting ? (
-                        <>Processing...</>
+                      {securityCodeSent ? (
+                        <>
+                          <CheckCircle size={18} />
+                          ✓ Security Code Sent
+                        </>
+                      ) : fetchingSecurityCode ? (
+                        <>
+                          <Loader2 className="animate-spin" size={18} />
+                          Fetching Code...
+                        </>
                       ) : (
                         <>
-                          <CheckCircle size={18} /> Mark as Packed & Add to Queue
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088" />
+                          </svg>
+                          {isSecurityCodeDisabled ? 'Add Phone to Send Code' : 'Send Security Code via WhatsApp'}
                         </>
                       )}
                     </button>
 
+                    {/* STEP 2: Share to Warehouse */}
                     <button
                       onClick={handleShareToWarehouse}
-                      className="w-full py-3 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 flex items-center justify-center gap-2"
+                      disabled={isShareWarehouseDisabled || sharedToWarehouse}
+                      className={`w-full py-3 font-medium rounded-lg flex items-center justify-center gap-2 ${sharedToWarehouse
+                          ? 'bg-green-600 text-white hover:bg-green-700 cursor-default'
+                          : isShareWarehouseDisabled
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-amber-600 text-white hover:bg-amber-700'
+                        }`}
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088"/>
-                      </svg>
-                      Share to Warehouse
+                      {sharedToWarehouse ? (
+                        <>
+                          <CheckCircle size={18} />
+                          ✓ Shared to Warehouse
+                        </>
+                      ) : (
+                        <>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.088" />
+                          </svg>
+                          {isShareWarehouseDisabled ? 'Complete Step 1 First' : 'Share to Warehouse'}
+                        </>
+                      )}
                     </button>
 
-                    {/* Security Code Display - Big and Clear */}
-                    {securityCode && (
-                      <div className="bg-purple-50 rounded-lg p-5 border border-purple-200">
+                    {/* STEP 3: Mark as Packed & Add to Queue */}
+                    <button
+                      onClick={handleMarkAsShipped}
+                      disabled={isMarkAsPackedDisabled || isSubmitting || markedAsPacked}
+                      className={`w-full py-3 font-medium rounded-lg flex items-center justify-center gap-2 ${markedAsPacked
+                          ? 'bg-green-600 text-white hover:bg-green-700 cursor-default'
+                          : isMarkAsPackedDisabled
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'bg-green-600 text-white hover:bg-green-700'
+                        } ${isSubmitting ? 'opacity-70 cursor-wait' : ''}`}
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="animate-spin" size={18} />
+                          Processing...
+                        </>
+                      ) : markedAsPacked ? (
+                        <>
+                          <CheckCircle size={18} />
+                          ✓ Completed & Added to Queue
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle size={18} />
+                          {isMarkAsPackedDisabled ? 'Complete Step 2 First' : 'Mark as Packed & Add to Queue'}
+                        </>
+                      )}
+                    </button>
+
+                    {/* Security Code Display */}
+                    {securityCode && !securityCodeSent && !fetchingSecurityCode && !generated && (
+                      <div className="bg-yellow-50 rounded-lg p-5 border border-yellow-200">
                         <div className="text-center">
                           <div className="flex items-center justify-center gap-2 mb-3">
-                            <Shield size={20} className="text-purple-600" />
-                            <span className="font-bold text-purple-900 text-lg">Security Code</span>
+                            <Loader2 className="animate-spin text-yellow-600" size={20} />
+                            <span className="font-bold text-yellow-900 text-lg">Generating QR Code...</span>
                           </div>
-                          <div className="bg-white rounded-lg p-4 border border-purple-300 mb-3">
-                            <p className="text-sm text-purple-700 mb-2">Send to institution via WhatsApp:</p>
-                            <p className="font-mono font-bold text-4xl text-purple-800 tracking-wider">
+                          <p className="text-sm text-yellow-700 mb-3">
+                            QR code is being generated. This will be ready in a moment.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {securityCode && !securityCodeSent && !fetchingSecurityCode && generated && (
+                      <div className="bg-yellow-50 rounded-lg p-5 border border-yellow-200">
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-2 mb-3">
+                            <Shield size={20} className="text-yellow-600" />
+                            <span className="font-bold text-yellow-900 text-lg">Step 1 Required</span>
+                          </div>
+                          <div className="bg-white rounded-lg p-4 border border-yellow-300 mb-3">
+                            <p className="text-sm text-yellow-700 mb-2">Send this security code to institution via WhatsApp before proceeding:</p>
+                            <p className="font-mono font-bold text-4xl text-yellow-800 tracking-wider">
                               {securityCode}
                             </p>
-                            <div className="mt-4 space-y-2 text-left text-sm text-purple-700">
-                              <p>• QR code opens verification website with actual order details</p>
-                              <p>• Shows institute information, items, and batch details</p>
-                              <p>• Requires this security code entry to verify</p>
-                              <p>• Valid for 2 months from today</p>
+                            <div className="mt-4 space-y-2 text-left text-sm text-yellow-700">
+                              <p>• Click "Send Security Code via WhatsApp" button above</p>
+                              <p>• Then proceed to Step 2: "Share to Warehouse"</p>
+                              <p>• Finally complete Step 3: "Mark as Packed & Add to Queue"</p>
                             </div>
                           </div>
                           <button
@@ -1037,7 +1429,7 @@ const GenerateLabelPage: React.FC = () => {
                               navigator.clipboard.writeText(securityCode);
                               alert('Security code copied to clipboard!');
                             }}
-                            className="w-full py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 flex items-center justify-center gap-2"
+                            className="w-full py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 flex items-center justify-center gap-2"
                           >
                             <Copy size={16} />
                             Copy Security Code

@@ -1,4 +1,3 @@
-// src/modules/admin/admin-orders.service.ts
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GetAdminOrdersDto } from './dto/get-orders.dto';
@@ -26,9 +25,21 @@ interface OrderValidationResult {
   stockAvailable: boolean;
 }
 
+interface GeneratePackingSlipData {
+  batchId: string;
+  internalTrackingId?: string;
+  charityAddress?: any;
+  securityCode?: string;
+  qrData?: string;
+  verificationUrl?: string;
+  securityCodeSent?: boolean;
+  sharedToWarehouse?: boolean;
+  markedAsPacked?: boolean;
+}
+
 @Injectable()
 export class AdminOrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async getAllOrders(dto: GetAdminOrdersDto) {
     const limit = dto.limit ? Number(dto.limit) : 50;
@@ -37,7 +48,7 @@ export class AdminOrdersService {
     const skip = isNaN(page) || page <= 0 ? 0 : (page - 1) * take;
 
     const where: any = {};
-    
+
     if (dto.priority) where.priority = dto.priority;
 
     const [orders, total] = await Promise.all([
@@ -94,23 +105,23 @@ export class AdminOrdersService {
     // Calculate derived fields for frontend
     const ordersWithCalculations = orders.map(order => {
       const totalBooks = order.orderItems.reduce((sum, item) => sum + item.quantity, 0);
-      
+
       // FIXED: Calculate correctly - only count books in PICKED/PACKED/DELIVERED status
       const pickedBooks = order.fulfillments
         .filter(f => f.status === 'PICKED')
         .reduce((sum, f) => sum + f.booksFulfilled, 0);
-      
+
       const packedBooks = order.fulfillments
         .filter(f => f.status === 'PACKED')
         .reduce((sum, f) => sum + f.booksFulfilled, 0);
-      
+
       const deliveredBooks = order.fulfillments
         .filter(f => f.status === 'DELIVERED')
         .reduce((sum, f) => sum + f.booksFulfilled, 0);
-      
+
       const totalFulfilled = pickedBooks + packedBooks + deliveredBooks;
       const remainingBooks = totalBooks - totalFulfilled;
-      
+
       return {
         ...order,
         _calculated: {
@@ -240,13 +251,13 @@ export class AdminOrdersService {
 
         const order = await tx.order.findUnique({
           where: { orderNumber },
-          include: { 
+          include: {
             orderItems: {
               include: {
                 book: true
               }
             },
-            fulfillments: true 
+            fulfillments: true
           },
         });
 
@@ -258,7 +269,7 @@ export class AdminOrdersService {
         const alreadyFulfilled = order.fulfillments
           .filter(f => ['PICKED', 'PACKED', 'DELIVERED'].includes(f.status))
           .reduce((sum, f) => sum + f.booksFulfilled, 0);
-        
+
         const remainingBooks = totalBooksInOrder - alreadyFulfilled;
 
         if (booksFulfilled > remainingBooks) {
@@ -275,11 +286,11 @@ export class AdminOrdersService {
               `Book information not available for order item in order ${orderNumber}`
             );
           }
-          
+
           // Calculate how many of THIS book we need to pick
           const percentageOfOrder = orderItem.quantity / totalBooksInOrder;
           const booksToPickFromThisItem = Math.ceil(booksFulfilled * percentageOfOrder);
-          
+
           // Check stock
           if (orderItem.book.stockQuantity < booksToPickFromThisItem) {
             throw new BadRequestException(
@@ -304,13 +315,13 @@ export class AdminOrdersService {
         // Re-fetch order to ensure we have latest data
         const order = await tx.order.findUnique({
           where: { orderNumber },
-          include: { 
+          include: {
             orderItems: {
               include: {
                 book: true
               }
             },
-            fulfillments: true 
+            fulfillments: true
           },
         });
 
@@ -319,7 +330,7 @@ export class AdminOrdersService {
         }
 
         const totalBooksInOrder = order.orderItems.reduce((sum, oi) => sum + oi.quantity, 0);
-        
+
         // FIXED: Update stock for each book with null checks
         for (const orderItem of order.orderItems) {
           if (!orderItem.book) {
@@ -327,14 +338,14 @@ export class AdminOrdersService {
               `Book information not available for order item in order ${orderNumber} during processing`
             );
           }
-          
+
           const percentageOfOrder = orderItem.quantity / totalBooksInOrder;
           const booksToPickFromThisItem = Math.ceil(booksFulfilled * percentageOfOrder);
-          
+
           await tx.book.update({
             where: { id: orderItem.book.id },
-            data: { 
-              stockQuantity: { decrement: booksToPickFromThisItem } 
+            data: {
+              stockQuantity: { decrement: booksToPickFromThisItem }
             }
           });
         }
@@ -351,7 +362,7 @@ export class AdminOrdersService {
 
         fulfillmentRecords.push(fulfillment);
         totalBooksPicked += booksFulfilled;
-        
+
         // FIXED: Update order status after each fulfillment
         await this.updateOrderStatusAfterFulfillment(tx, orderNumber);
       }
@@ -368,10 +379,119 @@ export class AdminOrdersService {
     });
   }
 
-  async generatePackingSlip(batchId: string, internalTrackingId: string, charityAddress: any) {
-    return this.prisma.prisma.$transaction(async (tx) => {
+  // ==================== NEW: Get packing slip by batch ID ====================
+  async getPackingSlip(batchId: string) {
+    const packingSlip = await this.prisma.prisma.packingSlip.findUnique({
+      where: { batchId },
+    });
+
+    if (!packingSlip) {
+      return {
+        success: false,
+        data: null,
+        message: 'No packing slip found for this batch',
+      };
+    }
+
+    return {
+      success: true,
+      data: packingSlip,
+    };
+  }
+
+  // ==================== UPDATED: Generate packing slip ====================
+ // ==================== UPDATED: Generate packing slip ====================
+async generatePackingSlip(
+  batchId: string,
+  charityAddress?: any,
+  qrData?: string,
+  verificationUrl?: string,
+  securityCode?: string,
+  securityCodeSent?: boolean,
+  sharedToWarehouse?: boolean,
+  markedAsPacked?: boolean,
+  // Add these for backward compatibility with frontend
+  status?: string,
+  internalTrackingId?: string
+) {
+  return this.prisma.prisma.$transaction(async (tx) => {
+    // ===============================
+    // 1️⃣ PACKING SLIP (UPSERT LOGIC)
+    // ===============================
+
+    // Check if packing slip already exists
+    let packingSlip = await tx.packingSlip.findUnique({
+      where: { batchId },
+    });
+
+    // Handle parameter order issue - if securityCode is coming as qrData due to mismatch
+    let actualSecurityCode = securityCode;
+    let actualQrData = qrData;
+    let actualVerificationUrl = verificationUrl;
+    
+    // Debug: check what's actually being received
+    console.log('DEBUG - Parameters received:', {
+      batchId,
+      charityAddress: charityAddress ? 'Object' : 'undefined',
+      qrData,
+      verificationUrl,
+      securityCode,
+      securityCodeSent,
+      sharedToWarehouse,
+      markedAsPacked,
+      status,
+      internalTrackingId
+    });
+
+    if (!packingSlip) {
+      // Generate expiry date (2 months)
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + 2);
+
+      packingSlip = await tx.packingSlip.create({
+        data: {
+          batchId,
+          securityCode: actualSecurityCode || this.generateSecurityCode(),
+          expiryDate,
+          charityAddress,
+          qrData: actualQrData,
+          verificationUrl: actualVerificationUrl,
+          securityCodeSent: securityCodeSent || false,
+          sharedToWarehouse: sharedToWarehouse || false,
+          markedAsPacked: markedAsPacked || false,
+        },
+      });
+    } else {
+      // Update existing packing slip with new data
+      const updateData: any = {
+        updatedAt: new Date(),
+      };
+
+      // Only update fields that are provided
+      if (charityAddress !== undefined) updateData.charityAddress = charityAddress;
+      if (actualQrData !== undefined) updateData.qrData = actualQrData;
+      if (actualVerificationUrl !== undefined) updateData.verificationUrl = actualVerificationUrl;
+      if (actualSecurityCode !== undefined) updateData.securityCode = actualSecurityCode;
+      if (securityCodeSent !== undefined) updateData.securityCodeSent = securityCodeSent;
+      if (sharedToWarehouse !== undefined) updateData.sharedToWarehouse = sharedToWarehouse;
+      if (markedAsPacked !== undefined) updateData.markedAsPacked = markedAsPacked;
+
+      packingSlip = await tx.packingSlip.update({
+        where: { batchId },
+        data: updateData,
+      });
+    }
+
+    // ===============================
+    // 2️⃣ EXISTING FULFILLMENT LOGIC - CRITICAL FIX
+    // ===============================
+    
+    // FIX: Handle both markedAsPacked and status for backward compatibility
+    const shouldMarkAsPacked = markedAsPacked || status === 'PACKED';
+    
+    if (shouldMarkAsPacked) {
       const fulfillments = await tx.orderBatchFulfillment.findMany({
-        where: { 
+        where: {
           batchId,
           status: 'PICKED'
         },
@@ -381,33 +501,126 @@ export class AdminOrdersService {
         throw new BadRequestException(`No PICKED fulfillments found for batch ${batchId}`);
       }
 
+      // UPDATE: Include charityAddress when updating fulfillments
       await tx.orderBatchFulfillment.updateMany({
-        where: { 
+        where: {
           batchId,
-          status: 'PICKED' 
+          status: 'PICKED'
         },
         data: {
           status: 'PACKED' as const,
           packedAt: new Date(),
-          internalTrackingId,
-          charityAddress,
+          charityAddress: charityAddress || undefined,
         },
       });
 
       for (const f of fulfillments) {
         await this.updateOrderStatusAfterFulfillment(tx, f.orderNumber);
       }
+    } else if (charityAddress !== undefined) {
+      // NEW: Also update charityAddress even if not marked as packed yet
+      await tx.orderBatchFulfillment.updateMany({
+        where: {
+          batchId,
+        },
+        data: {
+          charityAddress: charityAddress,
+          updatedAt: new Date(),
+        },
+      });
+    }
 
-      return {
-        success: true,
-        message: `Packing slip generated for Batch ${batchId}`,
+    // ===============================
+    // 3️⃣ RETURN COMPLETE DATA
+    // ===============================
+
+    return {
+      success: true,
+      message: `Packing slip ${packingSlip ? 'updated' : 'created'} for Batch ${batchId}`,
+      data: {
+        batchId,
+        securityCode: packingSlip.securityCode,
+        expiryDate: packingSlip.expiryDate,
+        charityAddress: packingSlip.charityAddress,
+        qrData: packingSlip.qrData,
+        verificationUrl: packingSlip.verificationUrl,
+        securityCodeSent: packingSlip.securityCodeSent,
+        sharedToWarehouse: packingSlip.sharedToWarehouse,
+        markedAsPacked: packingSlip.markedAsPacked,
+        createdAt: packingSlip.createdAt,
+        updatedAt: packingSlip.updatedAt,
+      },
+    };
+  });
+}
+
+  // ==================== NEW: Update workflow state only ====================
+  async updatePackingSlipWorkflow(
+    batchId: string,
+    updates: {
+      securityCodeSent?: boolean;
+      sharedToWarehouse?: boolean;
+      markedAsPacked?: boolean;
+    }
+  ) {
+    const packingSlip = await this.prisma.prisma.packingSlip.findUnique({
+      where: { batchId },
+    });
+
+    if (!packingSlip) {
+      throw new NotFoundException(`Packing slip for batch ${batchId} not found`);
+    }
+
+    const updated = await this.prisma.prisma.packingSlip.update({
+      where: { batchId },
+      data: {
+        ...updates,
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Workflow state updated',
+      data: updated,
+    };
+  }
+
+  
+
+
+  // ==================== NEW: Generate security code only ====================
+  async generateSecurityCodeOnly(batchId: string) {
+    let packingSlip = await this.prisma.prisma.packingSlip.findUnique({
+      where: { batchId },
+    });
+
+    if (!packingSlip) {
+      // Generate expiry date (2 months)
+      const expiryDate = new Date();
+      expiryDate.setMonth(expiryDate.getMonth() + 2);
+
+      packingSlip = await this.prisma.prisma.packingSlip.create({
         data: {
           batchId,
-          trackingId: internalTrackingId,
-          fulfillmentsCount: fulfillments.length,
+          securityCode: this.generateSecurityCode(),
+          expiryDate,
         },
-      };
-    });
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        securityCode: packingSlip.securityCode,
+        expiryDate: packingSlip.expiryDate,
+        batchId,
+      },
+    };
+  }
+
+  private generateSecurityCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
   // ============= CRITICAL FIX: Updated status logic =============
@@ -493,7 +706,7 @@ export class AdminOrdersService {
   async markBatchAsDelivered(batchId: string) {
     return this.prisma.prisma.$transaction(async (tx) => {
       const fulfillments = await tx.orderBatchFulfillment.findMany({
-        where: { 
+        where: {
           batchId,
           status: 'PACKED'
         },
@@ -504,9 +717,9 @@ export class AdminOrdersService {
       }
 
       await tx.orderBatchFulfillment.updateMany({
-        where: { 
+        where: {
           batchId,
-          status: 'PACKED' 
+          status: 'PACKED'
         },
         data: {
           status: 'DELIVERED' as const,
@@ -549,19 +762,19 @@ export class AdminOrdersService {
     }
 
     const totalBooks = order.orderItems.reduce((sum, item) => sum + item.quantity, 0);
-    
+
     const pickedBooks = order.fulfillments
       .filter(f => f.status === 'PICKED')
       .reduce((sum, f) => sum + f.booksFulfilled, 0);
-    
+
     const packedBooks = order.fulfillments
       .filter(f => f.status === 'PACKED')
       .reduce((sum, f) => sum + f.booksFulfilled, 0);
-    
+
     const deliveredBooks = order.fulfillments
       .filter(f => f.status === 'DELIVERED')
       .reduce((sum, f) => sum + f.booksFulfilled, 0);
-    
+
     const totalFulfilled = pickedBooks + packedBooks + deliveredBooks;
     const remainingBooks = totalBooks - totalFulfilled;
 
@@ -586,7 +799,7 @@ export class AdminOrdersService {
   // ============= NEW: Batch validation endpoint =============
   async validateBatch(batchItems: BatchItem[]) {
     const validationResults: OrderValidationResult[] = [];
-    const errors: Array<{orderNumber: string, error: string}> = [];
+    const errors: Array<{ orderNumber: string, error: string }> = [];
 
     for (const item of batchItems) {
       try {
@@ -612,7 +825,7 @@ export class AdminOrdersService {
         const alreadyFulfilled = order.fulfillments
           .filter(f => ['PICKED', 'PACKED', 'DELIVERED'].includes(f.status))
           .reduce((sum, f) => sum + f.booksFulfilled, 0);
-        
+
         const remainingBooks = totalBooksInOrder - alreadyFulfilled;
 
         // Safely check stock availability with null checks

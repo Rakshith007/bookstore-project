@@ -1,23 +1,26 @@
 // src/app/admin/VerifyDeliveryPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { 
-  CheckCircle, XCircle, Package, Building2, Calendar, Key, 
+import {
+  CheckCircle, XCircle, Package, Building2, Calendar, Key,
   Loader2, MapPin, Phone, Book, Check, Shield, AlertCircle,
   Clock, ArrowLeft
 } from 'lucide-react';
+
+
+const api = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
 const VerifyDeliveryPage = () => {
   const { batchId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  
+
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [verificationSuccess, setVerificationSuccess] = useState(false);
   const [error, setError] = useState('');
   const [enteredCode, setEnteredCode] = useState('');
-  
+
   const [deliveryData, setDeliveryData] = useState(null);
   const [securityCodeFromQR, setSecurityCodeFromQR] = useState('');
   const [isExpired, setIsExpired] = useState(false);
@@ -34,11 +37,11 @@ const VerifyDeliveryPage = () => {
     const totalBooks = searchParams.get('totalBooks');
     const expiryDate = searchParams.get('expiry');
     const itemsParam = searchParams.get('items');
-    
+
     if (codeFromURL) {
       setSecurityCodeFromQR(codeFromURL);
     }
-    
+
     // Check if QR code is expired
     if (expiryDate) {
       const expiry = new Date(expiryDate);
@@ -48,7 +51,7 @@ const VerifyDeliveryPage = () => {
         setError('This QR code has expired. Please contact the sender for a new code.');
       }
     }
-    
+
     // Parse items from URL parameter
     let items = [];
     if (itemsParam) {
@@ -58,10 +61,10 @@ const VerifyDeliveryPage = () => {
         console.error('Error parsing items:', err);
       }
     }
-    
+
     // Calculate total value
     const totalValue = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
+
     // Set delivery data from URL parameters (ACTUAL DATA)
     setDeliveryData({
       batchId: batchId || 'Unknown',
@@ -86,11 +89,11 @@ const VerifyDeliveryPage = () => {
         year: 'numeric'
       }) : 'Unknown'
     });
-    
+
     setLoading(false);
   }, [batchId, searchParams]);
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     if (!enteredCode.trim()) {
       setError('Please enter the security code');
       return;
@@ -109,26 +112,71 @@ const VerifyDeliveryPage = () => {
     setVerifying(true);
     setError('');
 
-    // Simulate verification process
-    setTimeout(() => {
-      // Check if entered code matches the one from QR
-      if (enteredCode === securityCodeFromQR) {
-        setVerificationSuccess(true);
-        
-        // In real app, update backend status here
-        console.log('Delivery verified successfully!');
-        
-        // Auto redirect after 3 seconds
-        setTimeout(() => {
-          navigate('/');
-        }, 3000);
-      } else {
-        setError('Invalid security code. Please check and try again.');
-      }
-      setVerifying(false);
-    }, 1500);
-  };
+    try {
+      // 1. First, fetch the security code from backend using batchId
+      const getCodeResponse = await fetch(`${api}/books/verify/get-security-code?batchId=${batchId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          // Add authentication header if needed
+          // 'Authorization': `Bearer ${yourToken}`
+        }
+      });
 
+      if (!getCodeResponse.ok) {
+        throw new Error('Failed to fetch security code from server');
+      }
+      console.log('Fetched code response:', getCodeResponse);
+      const codeData = await getCodeResponse.json();
+      console.log('Security code data:', codeData.data.securityCode);
+
+      // Check if delivery is already verified
+      if (codeData.status === 'delivered') {
+        setError('This delivery has already been verified.');
+        setVerifying(false);
+        return;
+      }
+
+      // 2. Compare the entered code with the backend stored code
+      if (enteredCode !== codeData.data.securityCode) {
+        setError('Invalid security code. Please check and try again.');
+        setVerifying(false);
+        return;
+      }
+
+      // 3. If code matches, update delivery status to "delivered"
+      const updateResponse = await fetch(`${api}/books/updateStatus/${batchId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        // Minimal payload since backend doesn't use most fields
+        body: JSON.stringify({})
+      });
+      
+      if (!updateResponse.ok) {
+        throw new Error('You have already verified this delivery.');
+      }
+
+      const updateData = await updateResponse.json();
+      if (updateData.success) {
+        setVerificationSuccess(true);
+
+        // Success - update UI
+        console.log('Delivery verified successfully!');
+
+        // Auto redirect after 
+      } else {
+        setError(updateData.message || 'Verification failed. Please try again.');
+      }
+
+    } catch (error) {
+      console.error('Verification error:', error);
+      setError(error.message || 'Verification failed. Please try again.');
+    } finally {
+      setVerifying(false);
+    }
+  };
   const formatCurrency = (amount) => {
     return `OMR ${amount.toFixed(3)}`;
   };
@@ -136,7 +184,7 @@ const VerifyDeliveryPage = () => {
   const calculateDaysRemaining = () => {
     const expiryDate = searchParams.get('expiry');
     if (!expiryDate) return 0;
-    
+
     const expiry = new Date(expiryDate);
     const now = new Date();
     const diffTime = expiry.getTime() - now.getTime();
@@ -166,7 +214,7 @@ const VerifyDeliveryPage = () => {
             <ArrowLeft size={20} />
             <span>Back to Home</span>
           </button>
-          
+
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
               <Package size={32} className="text-blue-600" />
@@ -292,7 +340,7 @@ const VerifyDeliveryPage = () => {
                           <td className="py-3 px-4">
                             <span className="font-bold text-gray-900">{deliveryData?.totalBooks} items</span>
                           </td>
-                          
+
                         </tr>
                       </tfoot>
                     </table>
@@ -338,7 +386,7 @@ const VerifyDeliveryPage = () => {
                     <p className="text-sm text-gray-600 mb-4">
                       Enter the 6-digit security code received via WhatsApp
                     </p>
-                    
+
                     <div className="relative">
                       <input
                         type="text"
@@ -358,15 +406,14 @@ const VerifyDeliveryPage = () => {
                           {[1, 2, 3, 4, 5, 6].map((digit) => (
                             <div
                               key={digit}
-                              className={`w-2 h-2 rounded-full ${
-                                enteredCode.length >= digit ? 'bg-blue-600' : 'bg-gray-300'
-                              }`}
+                              className={`w-2 h-2 rounded-full ${enteredCode.length >= digit ? 'bg-blue-600' : 'bg-gray-300'
+                                }`}
                             />
                           ))}
                         </div>
                       </div>
                     </div>
-                    
+
                     <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
                       <AlertCircle size={12} />
                       The security code was sent to the institution via WhatsApp
@@ -412,7 +459,7 @@ const VerifyDeliveryPage = () => {
                   </div>
                   <h3 className="text-xl font-bold text-green-900 mb-2">Delivery Verified Successfully!</h3>
                   <p className="text-gray-600 mb-4">The order status has been updated to "Delivered"</p>
-                  
+
                   <div className="bg-green-50 rounded-lg p-4 mb-6">
                     <p className="text-sm text-green-800">
                       <span className="font-bold">Batch ID:</span> {deliveryData?.batchId}
@@ -427,7 +474,7 @@ const VerifyDeliveryPage = () => {
                       <span className="font-bold">Items Delivered:</span> {deliveryData?.totalBooks}
                     </p>
                   </div>
-                  
+
                   <p className="text-sm text-gray-500">Redirecting to home page...</p>
                 </div>
               )}

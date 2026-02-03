@@ -1,17 +1,17 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Put, 
-  Delete, 
-  Patch, 
-  Body, 
-  Param, 
-  Query, 
-  UploadedFile, 
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Delete,
+  Patch,
+  Body,
+  Param,
+  Query,
+  UploadedFile,
   UseInterceptors,
   ParseIntPipe,
-  UseGuards 
+  UseGuards
 } from '@nestjs/common';
 import { BooksService } from './books.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -28,7 +28,7 @@ import { Role } from '@prisma/client';
 
 @Controller('books')
 export class BooksController {
-  constructor(private readonly booksService: BooksService) {}
+  constructor(private readonly booksService: BooksService) { }
 
   // ────────────────────────────────────────────────
   // PUBLIC READ ENDPOINTS (no auth needed)
@@ -118,4 +118,15 @@ export class BooksController {
   async bulkUpdateStatus(@Body() body: { ids: number[]; status: string }) {
     return this.booksService.bulkUpdateStatus(body.ids, body.status);
   }
+
+  @Get('verify/get-security-code')
+  async getSecurityCode(@Query('batchId') batchId: string) {
+    return this.booksService.getSecurityCodeOnly(batchId);
+  }
+
+  @Put('updateStatus/:batchId')
+  async verifyDelivery(@Param('batchId') batchId: string) {
+    return this.booksService.verifyDelivery(batchId);
+  }
+
 }

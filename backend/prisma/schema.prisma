@@ -196,6 +196,28 @@ model Wishlist {
   @@id([userId, bookId])
 }
 
+model PackingSlip {
+  id                 String   @id @default(uuid())
+  batchId            String   @unique
+  securityCode       String   @db.VarChar(6)
+  expiryDate         DateTime
+  
+  // ✅ Make sure ALL these fields exist:
+  charityAddress     Json?     
+  qrData            String?    
+  verificationUrl   String?    
+  isCodeUsed        Boolean  @default(false)    // ← THIS IS MISSING!
+  
+  securityCodeSent   Boolean  @default(false)
+  sharedToWarehouse  Boolean  @default(false)
+  markedAsPacked     Boolean  @default(false)
+  
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([batchId])
+}
+
 model CartItem {
   id        Int      @id @default(autoincrement())
   user      User?    @relation(fields: [userId], references: [id])

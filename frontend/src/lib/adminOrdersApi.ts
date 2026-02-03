@@ -36,6 +36,7 @@ export interface AdminOrder {
 }
 
 export interface AdminOrdersResponse {
+  
   success: boolean;
   data: AdminOrder[];
 }
